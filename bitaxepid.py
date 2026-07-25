@@ -13,10 +13,9 @@ Usage:
 
 Dependencies:
     - Terceros: rich, pyyaml, simple_pid, pyfiglet, urllib3
-    - Estandar: argparse, logging, signal, sys, time, typing
+    - Estandar: logging, signal, sys, time, typing
 """
 
-import argparse
 import logging
 import signal
 import sys
@@ -39,9 +38,7 @@ from config import YamlConfigLoader, load_config, validate_config
 from logger import Logger
 from pools import get_fastest_pools, parse_stratum_url
 from metrics_server import start_metrics_server, update_metrics
-
-__version__ = "1.0.3"  # add connection pool for reuse to bitaxe.
-
+from cli import parse_arguments
 
 class TuningManager:
     """Manages the tuning process for a Bitaxe miner, adjusting settings and stratum pools."""
@@ -318,83 +315,6 @@ class TuningManager:
         finally:
             if isinstance(self.terminal_ui, RichTerminalUI):
                 self.terminal_ui.stop()
-
-
-def parse_arguments() -> argparse.Namespace:
-    """
-    Parse command-line arguments for the BitaxePID tuner.
-
-    Returns:
-        argparse.Namespace: Parsed arguments with command-line options.
-
-    Example:
-        >>> args = parse_arguments()  # Run with: python bitaxepid.py --ip 192.168.1.1 --serve-metrics
-        >>> args.ip
-        '192.168.1.1'
-        >>> args.serve_metrics
-        True
-    """
-    parser = argparse.ArgumentParser(description="BitaxePID Auto-Tuner")
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
-    parser.add_argument(
-        "--ip", required=True, type=str, help="IP address of the Bitaxe miner"
-    )
-    parser.add_argument(
-        "--config", type=str, help="Path to optional user YAML configuration file"
-    )
-    parser.add_argument(
-        "--user-file",
-        type=str,
-        default=None,
-        help="Path to user YAML file (default: from config)",
-    )
-    parser.add_argument(
-        "--pools-file",
-        type=str,
-        default=None,
-        help="Path to pools YAML file (default: from config)",
-    )
-    parser.add_argument(
-        "--primary-stratum",
-        type=str,
-        help="Primary stratum URL (e.g., stratum+tcp://host:port)",
-    )
-    parser.add_argument(
-        "--backup-stratum",
-        type=str,
-        help="Backup stratum URL (e.g., stratum+tcp://host:port)",
-    )
-    parser.add_argument(
-        "--stratum-user", type=str, help="Stratum user for primary pool"
-    )
-    parser.add_argument(
-        "--fallback-stratum-user", type=str, help="Stratum user for backup pool"
-    )
-    parser.add_argument("--voltage", type=float, help="Initial voltage override (mV)")
-    parser.add_argument(
-        "--frequency", type=float, help="Initial frequency override (MHz)"
-    )
-    parser.add_argument(
-        "--sample-interval", type=float, help="Sample interval override (seconds)"
-    )
-    parser.add_argument(
-        "--log-to-console", action="store_true", help="Log to console instead of UI"
-    )
-    parser.add_argument(
-        "--logging-level",
-        type=str,
-        choices=["info", "debug"],
-        default="info",
-        help="Logging level",
-    )
-    parser.add_argument(
-        "--serve-metrics",
-        action="store_true",
-        help="Serve metrics via HTTP on port 8093 (default: False)",
-    )
-    return parser.parse_args()
 
 
 def main() -> None:
