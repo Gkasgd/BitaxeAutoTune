@@ -97,6 +97,10 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+[UMBREL.md](UMBREL.md) walks through this on an Umbrel node step by step, in
+Spanish: what the startup log should look like, how to check the limits are
+actually in place, and what is verified and what is not.
+
 `docker compose down` stops it. The default profile is `safe-BM1370.yaml`
 (conservative limits, see below); change `BITAXEPID_CONFIG` in `.env` for a
 different one, or unset it to use the factory limits of whichever chip the miner
