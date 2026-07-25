@@ -268,6 +268,116 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 4b. El despliegue con docker compose: que el YAML sea valido y que el comando
+#     que se le pasa al contenedor encaje con el ENTRYPOINT del Containerfile.
+#     El ENTRYPOINT termina en --ip, asi que el primer elemento de command debe
+#     ser la IP y no un flag; si alguien reordena uno de los dos ficheros sin
+#     mirar el otro, el contenedor arranca con --ip apuntando a un flag.
+# ---------------------------------------------------------------------------
+echo
+echo "despliegue con docker compose:"
+if [ ! -f "$ROOT/docker-compose.yml" ]; then
+  skipped "docker-compose.yml (no existe)"
+elif ! "$PY" -c "import yaml" 2>/dev/null; then
+  skipped "docker-compose.yml (PyYAML no instalado)"
+else
+  compose_report="$("$PY" - "$ROOT" <<'COMPOSEEOF'
+import json
+import os
+import re
+import sys
+
+import yaml
+
+root = sys.argv[1]
+out = []
+
+try:
+    with open(os.path.join(root, "docker-compose.yml")) as fh:
+        compose = yaml.safe_load(fh)
+except Exception as exc:
+    print(f"FAIL|docker-compose.yml no es YAML valido: {exc}")
+    sys.exit(0)
+
+services = (compose or {}).get("services") or {}
+if not services:
+    print("FAIL|docker-compose.yml no define ningun servicio")
+    sys.exit(0)
+out.append(f"PASS|docker-compose.yml es YAML valido ({len(services)} servicio)")
+
+svc = services.get("bitaxepid")
+if svc is None:
+    print("FAIL|docker-compose.yml no define el servicio bitaxepid")
+    sys.exit(0)
+
+# El ENTRYPOINT se lee del Containerfile, no se da por supuesto.
+entry = None
+try:
+    with open(os.path.join(root, "Containerfile")) as fh:
+        match = re.search(r"^ENTRYPOINT\s+(\[.*\])\s*$", fh.read(), re.M)
+    if match:
+        entry = json.loads(match.group(1))
+except Exception:
+    entry = None
+
+command = svc.get("command")
+if not isinstance(command, list) or not command:
+    out.append("FAIL|el servicio bitaxepid no define command como lista")
+elif entry is None:
+    out.append("FAIL|no se pudo leer el ENTRYPOINT del Containerfile")
+elif entry[-1] != "--ip":
+    out.append(f"FAIL|el ENTRYPOINT no termina en --ip sino en {entry[-1]}")
+elif command[0].startswith("-"):
+    out.append(
+        f"FAIL|command[0] es {command[0]}, pero el ENTRYPOINT espera ahi la IP"
+    )
+else:
+    out.append("PASS|command encaja con el ENTRYPOINT (la IP va primera)")
+
+# La plantilla de variables debe declarar las que el compose usa: si falta una,
+# el fallo aparece en el despliegue del usuario y no aqui.
+env_vars = set(re.findall(r"\$\{(\w+)", yaml.safe_dump(compose)))
+example = os.path.join(root, ".env.example")
+if not env_vars:
+    out.append("PASS|el compose no depende de variables de entorno")
+elif not os.path.exists(example):
+    out.append(f"FAIL|el compose usa {len(env_vars)} variables y no hay .env.example")
+else:
+    with open(example) as fh:
+        declared = {
+            line.split("=", 1)[0].strip()
+            for line in fh
+            if "=" in line and not line.lstrip().startswith("#")
+        }
+    faltan = sorted(env_vars - declared)
+    if faltan:
+        out.append(f"FAIL|.env.example no declara: {', '.join(faltan)}")
+    else:
+        out.append(f"PASS|.env.example declara las {len(env_vars)} variables usadas")
+
+# El perfil que el compose usa por defecto tiene que existir en el repo.
+default_cfg = None
+if isinstance(command, list):
+    for i, arg in enumerate(command):
+        if arg == "--config" and i + 1 < len(command):
+            default_cfg = re.sub(r"\$\{\w+:-([^}]*)\}", r"\1", command[i + 1])
+if default_cfg:
+    if os.path.exists(os.path.join(root, default_cfg)):
+        out.append(f"PASS|el perfil por defecto del compose existe ({default_cfg})")
+    else:
+        out.append(f"FAIL|el compose apunta a {default_cfg}, que no esta en el repo")
+
+for line in out:
+    print(line)
+COMPOSEEOF
+)"
+  while IFS='|' read -r status msg; do
+    [ -z "$status" ] && continue
+    if [ "$status" = "PASS" ]; then ok "$msg"; else bad "$msg"; fi
+  done <<< "$compose_report"
+fi
+
+# ---------------------------------------------------------------------------
 # 5. requirements.txt debe cubrir lo que el codigo importa de terceros.
 #    Nota: el nombre del paquete en PyPI no siempre coincide con el del modulo
 #    (simple-pid -> simple_pid, pyyaml -> yaml), asi que la comparacion

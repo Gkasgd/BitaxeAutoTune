@@ -13,3 +13,11 @@ venv/
 *.csv
 bitaxepid_snapshot*.json
 *.json.tmp
+
+# Directorio de datos del perfil seguro y del contenedor (LOG_FILE y
+# SNAPSHOT_FILE apuntan ahi; docker-compose.yml lo monta como volumen).
+data/
+
+# Variables locales de docker compose: llevan la IP del miner, que es de cada
+# uno. La plantilla versionada es .env.example.
+.env

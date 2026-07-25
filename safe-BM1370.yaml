@@ -53,6 +53,8 @@ MANAGE_MINER_POOLS: FALSE
 METRICS_SERVE: TRUE
 
 # Ficheros propios, para no mezclar el historial de este perfil con el del
-# perfil de fabrica.
-LOG_FILE: "bitaxepid_tuning_log_BM1370_safe.csv"
-SNAPSHOT_FILE: "bitaxepid_snapshot_BM1370_safe.json"
+# perfil de fabrica. En data/ para que docker-compose.yml pueda montar ahi un
+# volumen y el historial sobreviva al contenedor; ejecutandolo directamente,
+# el directorio se crea solo.
+LOG_FILE: "data/bitaxepid_tuning_log_BM1370_safe.csv"
+SNAPSHOT_FILE: "data/bitaxepid_snapshot_BM1370_safe.json"

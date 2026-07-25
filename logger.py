@@ -40,7 +40,25 @@ class Logger:
         """
         self.log_file = log_file
         self.snapshot_file = snapshot_file
+        self._ensure_parent_dirs()
         self._initialize_csv()
+
+    def _ensure_parent_dirs(self) -> None:
+        """Crea el directorio de los ficheros de salida si no existe.
+
+        Permite configurar LOG_FILE y SNAPSHOT_FILE en un subdirectorio
+        ("data/tuning.csv"), que es lo que hace falta para montar un volumen en
+        un contenedor. Sin esto, open() falla con un FileNotFoundError que no
+        explica nada.
+        """
+        for path in (self.log_file, self.snapshot_file):
+            parent = os.path.dirname(path)
+            if not parent:
+                continue
+            try:
+                os.makedirs(parent, exist_ok=True)
+            except OSError as exc:
+                logger.error(f"No se pudo crear el directorio {parent}: {exc}")
 
     def _initialize_csv(self) -> None:
         """Initialize the CSV file with an alphabetized header row (MAC address first) if it doesn't exist."""

@@ -1,0 +1,86 @@
+# BitaxePID con docker compose.
+#
+# Pensado para dejarlo corriendo en un servidor que ya esta encendido siempre
+# (un Umbrel, una Raspberry, un NAS) apuntando al miner por IP.
+#
+# Puesta en marcha:
+#
+#   1. Copia el fichero de variables y pon la IP de tu miner:
+#        cp .env.example .env
+#        nano .env
+#   2. Arranca:
+#        docker compose up -d --build
+#   3. Mira que hace:
+#        docker compose logs -f
+#
+# Metricas en http://<host>:8093/metrics mientras METRICS_SERVE siga en TRUE en
+# el perfil de configuracion.
+#
+# Para parar:  docker compose down
+#
+# El perfil por defecto es safe-BM1370.yaml, conservador: 55 C de objetivo,
+# 500 MHz y 1150 mV como topes. Si tu miner no es un Gamma (BM1370), cambia
+# BITAXEPID_CONFIG en .env o quitala para usar los valores de fabrica del chip
+# que reporte el miner.
+
+services:
+  bitaxepid:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: bitaxepid:local
+    container_name: bitaxepid
+
+    # El ENTRYPOINT termina en "--ip", asi que el primer elemento de command es
+    # la IP y lo que sigue son flags. La invocacion final es:
+    #   python -u ./bitaxepid.py --logging-level debug --ip <IP> --config <perfil> --log-to-console
+    #
+    # --log-to-console: dentro de un contenedor no hay terminal interactiva para
+    # la TUI de rich, y los logs tienen que salir por stdout para que
+    # `docker compose logs` sirva de algo.
+    command:
+      - "${BITAXEPID_MINER_IP:?pon la IP del miner en .env (BITAXEPID_MINER_IP)}"
+      - "--config"
+      - "${BITAXEPID_CONFIG:-safe-BM1370.yaml}"
+      - "--log-to-console"
+
+    ports:
+      # Metricas para Prometheus/Grafana. Solo escucha si METRICS_SERVE es TRUE
+      # en la configuracion (o si se añade --serve-metrics a command).
+      - "${BITAXEPID_METRICS_PORT:-8093}:8093"
+
+    volumes:
+      # El CSV de tuning y el snapshot JSON, para que sobrevivan al contenedor.
+      # safe-BM1370.yaml apunta LOG_FILE y SNAPSHOT_FILE a data/, relativo al
+      # WORKDIR del contenedor (/app). Si usas un perfil propio con rutas
+      # planas, los ficheros caeran en /app y este volumen no los recogera.
+      - ./data:/app/data
+
+    environment:
+      # Redundante con el -u del ENTRYPOINT, pero inofensivo y explicito: los
+      # logs salen sin buffer y `docker compose logs -f` los muestra al vuelo.
+      - PYTHONUNBUFFERED=1
+
+    # Si el miner o el contenedor se caen, que vuelva solo. unless-stopped y no
+    # always: si lo paras a mano, se queda parado.
+    restart: unless-stopped
+
+    # El tuner habla con el miner por HTTP en la red local. La red por defecto
+    # de compose (bridge con NAT) le da salida a la LAN, que es todo lo que
+    # necesita: no hace falta network_mode host ni privilegios.
+    #
+    # Sin acceso a la red del host tampoco puede escuchar broadcast/mDNS, asi
+    # que la IP del miner tiene que ser fija. Ponle una reserva en el DHCP del
+    # router.
+
+    # No necesita root para nada: solo hace peticiones HTTP y escribe ficheros.
+    # Si tu Docker lo permite, descomenta y ajusta al uid del dueño de ./data:
+    #   user: "1000:1000"
+
+    logging:
+      # Sin limite, los logs en debug de un proceso que muestrea cada 60 s
+      # llenan el disco a la larga.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
