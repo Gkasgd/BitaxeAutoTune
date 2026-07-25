@@ -31,12 +31,12 @@ from interfaces import (
 )
 from implementations import (
     BitaxeAPIClient,
-    Logger,
     YamlConfigLoader,
     RichTerminalUI,
     NullTerminalUI,
     PIDTuningStrategy,
 )
+from logger import Logger
 from pools import get_fastest_pools, parse_stratum_url
 from metrics_server import start_metrics_server, update_metrics
 import os

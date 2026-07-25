@@ -3,31 +3,28 @@
 Implementations Module for BitaxePID Auto-Tuner
 
 This module provides concrete implementations of the interfaces defined in `interfaces.py` for the BitaxePID
-auto-tuner. It includes classes for interacting with the Bitaxe miner API, logging data to CSV and JSON,
-loading YAML configurations, displaying a rich terminal UI, and applying a PID-based tuning strategy.
+auto-tuner. It includes classes for interacting with the Bitaxe miner API, loading YAML configurations,
+displaying a rich terminal UI, and applying a PID-based tuning strategy.
+
+La persistencia en CSV y JSON vive en logger.py.
 
 Usage:
-    >>> from implementations import BitaxeAPIClient, Logger
+    >>> from implementations import BitaxeAPIClient
     >>> client = BitaxeAPIClient("192.168.1.1")
-    >>> logger = Logger("log.csv", "snapshot.json")
     >>> system_info = client.get_system_info()
-    >>> logger.log_to_csv("2025-03-11 10:00:00", 485, 1200, 500, 48, {"PID_FREQ_KP": 0.2}, 14.6, 4812.5, 3001.25, 1312, 485, 3870)
 
 Dependencies:
     - Terceros: urllib3, pyyaml, simple_pid, rich, pyfiglet
-    - Estandar: csv, json, logging, os, time, typing
+    - Estandar: json, logging, time, typing
 """
 
-import csv
 import json
-import os
 import time
 from typing import Dict, Any, Optional, Tuple
 import urllib3
 from urllib3.util.retry import Retry
 from interfaces import (
     IBitaxeAPIClient,
-    ILogger,
     IConfigLoader,
     ITerminalUI,
     TuningStrategy,
@@ -304,147 +301,6 @@ class BitaxeAPIClient(IBitaxeAPIClient):
         self.http_pool.close()
         self.logger.info("BitaxeAPIClient connection pool closed")
         console.print(f"[{PRIMARY_ACCENT}]BitaxeAPIClient connection pool closed[/]")
-
-
-class Logger(ILogger):
-    """Concrete implementation for logging miner data to CSV and snapshots to JSON."""
-
-    def __init__(self, log_file: str, snapshot_file: str) -> None:
-        """
-        Initialize the logger with file paths.
-
-        Args:
-            log_file (str): Path to the CSV log file (e.g., "bitaxepid_tuning_log.csv").
-            snapshot_file (str): Path to the JSON snapshot file (e.g., "bitaxepid_snapshot.json").
-        """
-        self.log_file = log_file
-        self.snapshot_file = snapshot_file
-        self._initialize_csv()
-
-    def _initialize_csv(self) -> None:
-        """Initialize the CSV file with an alphabetized header row (MAC address first) if it doesn't exist."""
-        if not os.path.exists(self.log_file):
-            headers = [
-                "mac_address",
-                "timestamp",
-                "target_frequency",
-                "target_voltage",
-                "hashrate",
-                "temp",
-                "power",
-                "board_voltage",
-                "current",
-                "core_voltage_actual",
-                "frequency",
-                "fanrpm",
-                "pid_freq_kp",
-                "pid_freq_ki",
-                "pid_freq_kd",
-                "pid_volt_kp",
-                "pid_volt_ki",
-                "pid_volt_kd",
-                "initial_frequency",
-                "min_frequency",
-                "max_frequency",
-                "initial_voltage",
-                "min_voltage",
-                "max_voltage",
-                "frequency_step",
-                "voltage_step",
-                "target_temp",
-                "sample_interval",
-                "power_limit",
-                "hashrate_setpoint",
-            ]
-            with open(self.log_file, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-
-    def log_to_csv(
-        self,
-        mac_address: str,
-        timestamp: str,
-        target_frequency: float,
-        target_voltage: float,
-        hashrate: float,
-        temp: float,
-        pid_settings: Dict[str, Any],
-        power: float,
-        board_voltage: float,
-        current: float,
-        core_voltage_actual: float,
-        frequency: float,
-        fanrpm: int,
-    ) -> None:
-        """
-        Log miner performance data, including flattened PID settings and MAC address, to a CSV file.
-
-        Args:
-            mac_address (str): MAC address of the miner.
-            timestamp (str): Time of the data point (e.g., "2025-03-11 10:00:00").
-            target_frequency (float): Target frequency commanded by PID (MHz).
-            target_voltage (float): Target core voltage commanded by PID (mV).
-            hashrate (float): Measured hashrate (GH/s).
-            temp (float): Measured temperature (°C).
-            pid_settings (Dict[str, Any]): PID controller settings (e.g., {"PID_FREQ_KP": 0.2, "PID_VOLT_KI": 0.01}).
-            power (float): Measured power consumption (W).
-            board_voltage (float): Measured board voltage (mV).
-            current (float): Measured current (mA).
-            core_voltage_actual (float): Actual core voltage (mV).
-            frequency (float): Actual frequency (MHz).
-            fanrpm (int): Fan speed (RPM).
-        """
-        with open(self.log_file, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                [
-                    mac_address,
-                    timestamp,
-                    target_frequency,
-                    target_voltage,
-                    hashrate,
-                    temp,
-                    power,
-                    board_voltage,
-                    current,
-                    core_voltage_actual,
-                    frequency,
-                    fanrpm,
-                    pid_settings.get("PID_FREQ_KP", ""),
-                    pid_settings.get("PID_FREQ_KI", ""),
-                    pid_settings.get("PID_FREQ_KD", ""),
-                    pid_settings.get("PID_VOLT_KP", ""),
-                    pid_settings.get("PID_VOLT_KI", ""),
-                    pid_settings.get("PID_VOLT_KD", ""),
-                    pid_settings.get("INITIAL_FREQUENCY", ""),
-                    pid_settings.get("MIN_FREQUENCY", ""),
-                    pid_settings.get("MAX_FREQUENCY", ""),
-                    pid_settings.get("INITIAL_VOLTAGE", ""),
-                    pid_settings.get("MIN_VOLTAGE", ""),
-                    pid_settings.get("MAX_VOLTAGE", ""),
-                    pid_settings.get("FREQUENCY_STEP", ""),
-                    pid_settings.get("VOLTAGE_STEP", ""),
-                    pid_settings.get("TARGET_TEMP", ""),
-                    pid_settings.get("SAMPLE_INTERVAL", ""),
-                    pid_settings.get("POWER_LIMIT", ""),
-                    pid_settings.get("HASHRATE_SETPOINT", ""),
-                ]
-            )
-
-    def save_snapshot(self, voltage: float, frequency: float) -> None:
-        """
-        Save current miner settings as a snapshot to a JSON file.
-
-        Args:
-            voltage (float): Current target voltage setting (mV).
-            frequency (float): Current target frequency setting (MHz).
-        """
-        snapshot = {"voltage": voltage, "frequency": frequency}
-        try:
-            with open(self.snapshot_file, "w") as f:
-                json.dump(snapshot, f)
-        except Exception as e:
-            console.print(f"[{ERROR_COLOR}]Failed to save snapshot: {e}[/]")
 
 
 class YamlConfigLoader(IConfigLoader):
