@@ -1,5 +1,5 @@
 # BitaxePID Auto-Tuner
-![logo](bitaxepid-logo.jpg)
+![logo](docs/assets/bitaxepid-logo.jpg)
 
 ## Overview
 
@@ -8,7 +8,7 @@
 ### Note
 Upgrades may require updates to all files. You should either download the FULL release for a version, or clone the main repo.
 
-![example running](screenshot6.jpg)
+![example running](docs/assets/screenshot6.jpg)
 
 ---
 
@@ -44,7 +44,7 @@ The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
      ```
      Or use:
      ```bash
-     bash setup.sh  # Requires uv see https://docs.astral.sh/uv/getting-started/installation/
+     bash scripts/setup.sh  # Requires uv see https://docs.astral.sh/uv/getting-started/installation/
      ```
 ## Podman
 ```
@@ -57,7 +57,7 @@ Run the script with the Bitaxe IP address and optional arguments:
 ```bash
 python bitaxepid.py --ip 192.168.68.111 --config custom_config.yaml --voltage 1200 --frequency 500
 or if you have the uv venv installation;
-bash ./start.sh 192.168.68.111
+bash ./scripts/start.sh 192.168.68.111
 or
 % python bitaxepid.py --help
 usage: bitaxepid.py [-h] [--version] --ip IP [--config CONFIG] [--user-file USER_FILE] [--pools-file POOLS_FILE]
@@ -166,8 +166,8 @@ This modular design improves maintainability, testability, and scalability, maki
 
 ## Diagram
 
-![](appflow.png)
-![](entities.png)
+![](docs/assets/appflow.png)
+![](docs/assets/entities.png)
 
 ## Credits
 

@@ -8,8 +8,10 @@ LABEL maintainer="bitaxepid@starficient.com"
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy YAML and Python files into the container
-COPY *.yaml *.py ./
+# Copy YAML, Python files and the banner into the container.
+# banner.txt hace falta: RichTerminalUI lo abre al arrancar y sin el la TUI
+# muestra "Banner file not found".
+COPY *.yaml *.py banner.txt ./
 
 # Expose port
 # El servidor de metricas solo escucha si se arranca con --serve-metrics

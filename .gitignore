@@ -1,7 +1,15 @@
+# Bytecode de Python
 __pycache__/
 *.pyc
-*.log
-*.csv
-*.json.tmp
+
+# Entornos virtuales (los crea scripts/setup.sh)
 venv/
 .venv/
+
+# Salidas que genera el programa al ejecutarse. Los nombres concretos se
+# configuran con LOG_FILE y SNAPSHOT_FILE en los BM*.yaml; los patrones cubren
+# los valores por defecto.
+*.log
+*.csv
+bitaxepid_snapshot*.json
+*.json.tmp
