@@ -6,20 +6,24 @@ LABEL maintainer="bitaxepid@starficient.com"
 
 # Copy and install Python dependencies
 COPY requirements.txt .
-RUN pip3 install -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy YAML and Python files into the container
 COPY *.yaml *.py ./
 
-# Copy shell scripts and make them executable
-COPY setup.sh start.sh ./
-RUN chmod +x setup.sh start.sh
-
 # Expose port
+# El servidor de metricas solo escucha si se arranca con --serve-metrics
+# (o con METRICS_SERVE en la configuracion).
 EXPOSE 8093
 
 # Set the default command
-# podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
-# podman run --publish 8093:8093 bitaxepid-container 192.168.68.111
-
-ENTRYPOINT ["bash", "./podman.sh"]
+#   podman build -t bitaxepid-container -f Containerfile .
+#   podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
+#   podman run --publish 8093:8093 bitaxepid-container 192.168.68.111 --serve-metrics
+#
+# El argumento posicional de `podman run` es la IP del miner. Cualquier flag
+# adicional que se pase despues se añade a la invocacion.
+#
+# -u: salida sin buffer, para que los logs aparezcan en `podman logs` en
+# tiempo real en lugar de acumularse en el buffer de stdout.
+ENTRYPOINT ["python", "-u", "./bitaxepid.py", "--logging-level", "debug", "--ip"]
