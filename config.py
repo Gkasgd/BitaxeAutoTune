@@ -12,7 +12,7 @@ Uso:
     from config import YamlConfigLoader, load_config, validate_config
 
     config = load_config(YamlConfigLoader(), "BM1366.yaml", "mi_config.yaml")
-    validate_config(config)   # termina el proceso si falta alguna clave
+    validate_config(config)   # falta una clave -> termina; fuera de rango -> recorta
 
 Dependencias:
     - Terceros: pyyaml
@@ -83,9 +83,60 @@ def load_config(
     return config
 
 
+def clamp_initial_values(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recorta INITIAL_VOLTAGE e INITIAL_FREQUENCY al rango configurado.
+
+    El valor inicial se aplica al miner en el arranque (`_initialize_hardware`)
+    sin pasar por la estrategia de tuning, asi que el recorte de
+    `apply_strategy` no lo cubre: con MAX_VOLTAGE=1150 y `--voltage 1250` el
+    miner recibia 1250mV. MIN_VOLTAGE y MAX_VOLTAGE son limites de hardware, y
+    la unica lectura coherente es que valgan tambien para el primer valor que
+    se escribe.
+
+    Se recorta en lugar de abortar porque el caso normal es benigno y muy
+    facil de provocar: bajar MAX_FREQUENCY en un YAML propio deja el
+    INITIAL_FREQUENCY heredado del YAML del chip por encima del nuevo tope.
+    Abortar obligaria a redeclarar los valores iniciales cada vez que se
+    ajusta un limite. El recorte queda en el log como WARNING.
+
+    Modifica `config` in situ y lo devuelve, para poder encadenarlo.
+
+    Args:
+        config (Dict[str, Any]): Configuracion ya fusionada, con los overrides
+            de linea de comandos aplicados.
+
+    Returns:
+        Dict[str, Any]: El mismo diccionario, con los valores iniciales dentro
+            de rango.
+    """
+    for key, low_key, high_key, unit in (
+        ("INITIAL_VOLTAGE", "MIN_VOLTAGE", "MAX_VOLTAGE", "mV"),
+        ("INITIAL_FREQUENCY", "MIN_FREQUENCY", "MAX_FREQUENCY", "MHz"),
+    ):
+        value = config.get(key)
+        low = config.get(low_key)
+        high = config.get(high_key)
+        if value is None or low is None or high is None:
+            # validate_config ya informa de las claves que faltan.
+            continue
+        clamped = max(low, min(high, value))
+        if clamped != value:
+            logger.warning(
+                f"{key}={value}{unit} esta fuera del rango "
+                f"{low}-{high}{unit} ({low_key}/{high_key}): "
+                f"se usara {clamped}{unit}"
+            )
+            config[key] = clamped
+    return config
+
+
 def validate_config(config: Dict[str, Any]) -> None:
     """
     Validate that required configuration keys are present.
+
+    Tambien recorta los valores iniciales al rango configurado; ver
+    `clamp_initial_values`.
 
     Args:
         config (Dict[str, Any]): Configuration dictionary to validate.
@@ -120,3 +171,4 @@ def validate_config(config: Dict[str, Any]) -> None:
     if missing_keys:
         logger.error(f"Missing required config keys: {', '.join(missing_keys)}")
         sys.exit(1)
+    clamp_initial_values(config)

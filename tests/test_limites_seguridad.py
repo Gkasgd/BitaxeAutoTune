@@ -8,8 +8,9 @@ estetico, es exactamente lo que esos parametros existen para impedir.
 El fallo que estos tests fijan estaba en el codigo original: las ramas que suben
 voltaje comprobaban `current_voltage < self.max_voltage` y luego sumaban un paso
 completo, sin recortar. Con max_voltage=1150, voltage_step=10 y un voltaje actual
-de 1145 (que puede venir del snapshot de una ejecucion anterior, o de un
-MAX_VOLTAGE bajado entre arranques) la propuesta era 1155 mV.
+de 1145 la propuesta era 1155 mV. Un voltaje que no es multiplo del paso es
+normal: sale de INITIAL_VOLTAGE, del override --voltage, o de lo que ya tuviera
+puesto el miner.
 
 Ejecutar:  python3 -m unittest tests.test_limites_seguridad -v
 No necesita miner ni red.
@@ -68,10 +69,9 @@ class TestNuncaSuperaElMaximo(unittest.TestCase):
     def test_barrido_de_voltajes_y_pasos(self):
         """Ninguna combinacion de voltaje inicial y paso debe superar el maximo.
 
-        Se barre tambien por encima del maximo: si el snapshot de una ejecucion
-        anterior guardo 1200mV y luego el usuario baja MAX_VOLTAGE a 1150, la
-        estrategia recibe un current_voltage ya fuera de rango y no debe
-        empeorarlo.
+        Se barre tambien por encima del maximo: la estrategia no debe empeorar
+        un valor que ya llega fuera de rango. El arranque se valida en
+        config.py, pero la estrategia no confia en eso.
         """
         for step in (5, 10, 20, 25):
             for volt in range(MIN_V, MAX_V + 60, 5):

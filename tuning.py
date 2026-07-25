@@ -189,10 +189,9 @@ class PIDTuningStrategy:
         # Red final: por muy razonada que sea cada rama, lo que sale de aqui va
         # directo al hardware. Se recorta al rango configurado una ultima vez,
         # asi que MAX_VOLTAGE y MAX_FREQUENCY son un tope real y no una
-        # intencion. Tambien cubre el caso de entrar ya fuera de rango: si el
-        # snapshot de una ejecucion anterior guardo 1200mV y despues se baja
-        # MAX_VOLTAGE a 1150, la primera propuesta ya viene recortada en lugar
-        # de arrastrar el valor viejo.
+        # intencion. Tambien cubre el caso de recibir un valor actual ya fuera
+        # de rango: la estrategia no depende de que quien la llama le pase
+        # valores sanos. El arranque se valida aparte, en config.py.
         clamped_voltage = max(self.min_voltage, min(self.max_voltage, new_voltage))
         clamped_frequency = max(
             self.min_frequency, min(self.max_frequency, new_frequency)
