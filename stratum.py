@@ -1,10 +1,29 @@
+#!/usr/bin/env python3
 """
-Pools Management Module
-This module provides functions for managing mining pool endpoints, measuring network latencies,
-and selecting optimal mining pools based on connectivity performance. It facilitates loading pool
-information from YAML configuration files, performing latency tests, and identifying the fastest pools.
+Endpoints stratum: parseo, medicion de latencia y seleccion de pools.
 
-Latency measurements are cached in pools.yaml and refreshed every 15 minutes by default.
+Lee la lista de pools de pools.yaml, mide la latencia de cada endpoint abriendo
+un socket TCP (varios intentos, se queda con la mediana) y devuelve los dos mas
+rapidos para usarlos como primario y de respaldo. Las mediciones se guardan en
+pools.yaml y se reutilizan durante 15 minutos, para no castigar a los pools con
+sondeos en cada arranque.
+
+Aqui vive tambien parse_stratum_url, la unica implementacion del parseo de
+endpoints del proyecto.
+
+Uso:
+    from stratum import get_fastest_pools, parse_stratum_url
+
+    pools = get_fastest_pools(yaml_file="pools.yaml", stratum_user="...", fallback_stratum_user="...")
+
+Como diagnostico manual, el modulo se puede ejecutar directamente para medir
+todos los pools e imprimir el YAML resultante por stdout:
+
+    python3 stratum.py
+
+Dependencias:
+    - Terceros: pyyaml
+    - Estandar: logging, os, socket, statistics, sys, time, typing, urllib.parse
 """
 
 import logging

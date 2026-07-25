@@ -11,7 +11,7 @@ No necesita miner ni red: parse_stratum_url no abre conexiones.
 
 import unittest
 
-from pools import parse_stratum_url
+from stratum import parse_stratum_url
 
 
 class TestFormatosValidos(unittest.TestCase):
