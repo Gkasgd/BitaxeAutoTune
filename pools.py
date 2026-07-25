@@ -3,7 +3,6 @@ Pools Management Module
 This module provides functions for managing mining pool endpoints, measuring network latencies,
 and selecting optimal mining pools based on connectivity performance. It facilitates loading pool
 information from YAML configuration files, performing latency tests, and identifying the fastest pools.
-Auxiliary reflection functions are included to support introspection and debugging.
 
 Latency measurements are cached in pools.yaml and refreshed every 15 minutes by default.
 """
@@ -303,40 +302,14 @@ def get_fastest_pools(
     return sorted_pools
 
 
-def test_file_permissions(yaml_file: str = "pools.yaml") -> bool:
-    """
-    Test if we have proper file permissions for the pools file.
-    """
-    try:
-        # Test read
-        with open(yaml_file, "r") as f:
-            data = yaml.safe_load(f)
-            print(f"Successfully read {yaml_file}")
-
-        # Test write
-        with open(f"{yaml_file}.test", "w") as f:
-            yaml.safe_dump(data, f)
-        print(f"Successfully wrote test file")
-
-        # Clean up test file
-        os.remove(f"{yaml_file}.test")
-        print(f"Successfully cleaned up test file")
-
-        return True
-    except Exception as e:
-        print(f"File permission test failed: {e}")
-        return False
-
-
-# Add to main function:
 def main() -> None:
     """
-    Main function to measure pool latencies and output them in YAML format.
-    """
-    if not test_file_permissions():
-        print("ERROR: File permission test failed. Please check file permissions.")
-        return
+    Diagnostico manual: mide las latencias de los pools y las imprime.
 
+    Se ejecuta con `python pools.py` para comprobar la conectividad sin
+    arrancar el auto-tuner completo. Igual que measure_pools(), reescribe
+    pools.yaml con las latencias medidas.
+    """
     pools_with_latency = measure_pools()
     print("\nCurrent pool latencies:")
     print(yaml.safe_dump(pools_with_latency, default_flow_style=False))
