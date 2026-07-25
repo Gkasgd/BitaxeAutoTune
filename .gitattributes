@@ -1,0 +1,26 @@
+# Normalizacion de finales de linea.
+#
+# Sin esto, git en Windows convierte los ficheros a CRLF al clonar y los
+# scripts .sh dejan de funcionar, tanto en Git Bash como en WSL, con errores
+# que no explican la causa ("$'\r': command not found", "set: pipefail:
+# invalid option name"). Los .sh se fuerzan a LF siempre.
+
+# Por defecto: git decide que es texto y lo normaliza a LF en el repositorio.
+* text=auto eol=lf
+
+# Scripts de shell: LF obligatorio en el disco tambien en Windows.
+*.sh text eol=lf
+
+# El resto del texto del proyecto, explicito para no depender de la
+# heuristica de text=auto.
+*.py text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+Containerfile text eol=lf
+LICENSE text eol=lf
+.gitignore text eol=lf
+
+# Binarios: que git no los toque nunca.
+*.png binary
+*.jpg binary
