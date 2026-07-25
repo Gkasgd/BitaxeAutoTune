@@ -28,12 +28,12 @@ from interfaces import (
     ITerminalUI,
     TuningStrategy,
 )
-from implementations import PIDTuningStrategy
 from ui_null import NullTerminalUI
 from ui_rich import RichTerminalUI
 from api_client import BitaxeAPIClient
 from config import YamlConfigLoader, load_config, validate_config
 from logger import Logger
+from tuning import PIDTuningStrategy
 from pools import get_fastest_pools, parse_stratum_url
 from metrics_server import start_metrics_server, update_metrics
 from cli import parse_arguments

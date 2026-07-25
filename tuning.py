@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-Implementations Module for BitaxePID Auto-Tuner
+Estrategia de tuning PID para el voltaje y la frecuencia del miner.
 
-Queda aqui, de forma transitoria, la estrategia de tuning PID. El resto de
-implementaciones ya vive en modulos propios: el cliente de la API en
-api_client.py, la UI en ui_rich.py y ui_null.py, la persistencia en logger.py y
-la carga de configuracion en config.py.
+Recibe el estado actual (voltaje, frecuencia, temperatura, hashrate, potencia) y
+devuelve el siguiente par voltaje/frecuencia a aplicar. Dos controladores PID
+persiguen el setpoint de hashrate, pero por delante de ellos manda la seguridad:
+si la temperatura o la potencia se pasan del limite, se baja aunque el hashrate
+quede corto. Cada decision se explica por pantalla, porque es la unica forma que
+tiene el usuario de entender por que el tuner sube o baja.
 
-Usage:
-    >>> from implementations import PIDTuningStrategy
-    >>> strategy = PIDTuningStrategy(...)
+Uso:
+    from tuning import PIDTuningStrategy
 
-Dependencies:
-    - Terceros: simple_pid, rich
+    strategy = PIDTuningStrategy(kp_freq=..., ki_freq=..., ...)
+    new_voltage, new_frequency = strategy.apply_strategy(
+        current_voltage, current_frequency, temp, hashrate, power
+    )
+
+Dependencias:
+    - Terceros: simple_pid, rich (a traves de ui_rich, para los mensajes)
     - Estandar: typing
 """
 
