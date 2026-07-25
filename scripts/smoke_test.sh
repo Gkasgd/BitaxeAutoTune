@@ -10,6 +10,12 @@
 # Uso:
 #   ./scripts/smoke_test.sh
 #
+# El interprete se puede elegir con la variable PYTHON, util en Windows, donde
+# el ejecutable se llama "python" y no "python3":
+#   PYTHON=python ./scripts/smoke_test.sh
+#
+# Necesita bash. En Windows funciona en Git Bash y en WSL.
+#
 # Salida: 0 si todo pasa. Las comprobaciones que requieren dependencias no
 # instaladas se SALTAN de forma explícita en lugar de fallar en silencio.
 
