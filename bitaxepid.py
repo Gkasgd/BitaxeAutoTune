@@ -13,7 +13,7 @@ Usage:
 
 Dependencies:
     - Terceros: rich, pyyaml, simple_pid, pyfiglet, urllib3
-    - Estandar: argparse, logging, signal, sys, time, http.server, socketserver, threading, typing
+    - Estandar: argparse, logging, os, signal, sys, time, typing
 """
 
 import argparse
@@ -21,9 +21,6 @@ import logging
 import signal
 import sys
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import ThreadingMixIn
-from threading import Thread
 from typing import Dict, Any, Optional, List
 from interfaces import (
     IBitaxeAPIClient,
@@ -41,49 +38,10 @@ from implementations import (
     PIDTuningStrategy,
 )
 from pools import get_fastest_pools, parse_stratum_url
-import json
+from metrics_server import start_metrics_server, update_metrics
 import os
 
 __version__ = "1.0.3"  # add connection pool for reuse to bitaxe.
-
-# Global variable to store the latest metrics for the HTTP server (now a list of dicts)
-latest_metrics: List[Dict[str, Any]] = []
-
-
-class MetricsHandler(BaseHTTPRequestHandler):
-    """HTTP handler to serve JSON metrics for Prometheus and Grafana."""
-
-    def do_GET(self) -> None:
-        """
-        Handle GET requests to the /metrics endpoint.
-
-        Serves the latest metrics as a JSON object with a list of endpoints, otherwise returns a 404.
-        """
-        if self.path == "/metrics":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.end_headers()
-            metrics_json = json.dumps({"endpoints": latest_metrics}).encode("utf-8")
-            self.wfile.write(metrics_json)
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-
-class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """Threaded HTTP server to handle multiple requests concurrently."""
-
-    pass
-
-
-def start_metrics_server() -> None:
-    """Start the HTTP server on port 8093 in a separate thread."""
-    server = ThreadedHTTPServer(("0.0.0.0", 8093), MetricsHandler)
-    server_thread = Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-    logging.info("Metrics server started on http://0.0.0.0:8093/metrics")
-
-
 
 class TuningManager:
     """Manages the tuning process for a Bitaxe miner, adjusting settings and stratum pools."""
@@ -298,7 +256,6 @@ class TuningManager:
 
     def start_tuning(self) -> None:
         """Start the tuning process, adjusting settings based on system info and exposing metrics if enabled."""
-        global latest_metrics
         try:
             if isinstance(self.terminal_ui, RichTerminalUI):
                 self.terminal_ui.start()
@@ -329,13 +286,7 @@ class TuningManager:
                 }
                 self.logger.log_to_csv(**metrics)
                 if self.config.get("METRICS_SERVE", False):
-                    # Replace existing entry for this MAC or append if new
-                    latest_metrics = [
-                        m
-                        for m in latest_metrics
-                        if m["mac_address"] != self.mac_address
-                    ]
-                    latest_metrics.append(metrics)
+                    update_metrics(self.mac_address, metrics)
 
                 new_voltage, new_frequency = self.tuning_strategy.apply_strategy(
                     current_voltage=self.target_voltage,
