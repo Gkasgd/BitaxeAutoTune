@@ -45,8 +45,9 @@ services:
       - "--log-to-console"
 
     ports:
-      # Metricas para Prometheus/Grafana. Solo escucha si METRICS_SERVE es TRUE
-      # en la configuracion (o si se añade --serve-metrics a command).
+      # Metricas en JSON. Solo escucha si METRICS_SERVE es TRUE en la
+      # configuracion (o si se añade --serve-metrics a command). Util para
+      # confirmar desde el navegador que el perfil cargado es el que crees.
       - "${BITAXEPID_METRICS_PORT:-8093}:8093"
 
     volumes:

@@ -59,8 +59,10 @@ The Bitaxe family (values below for the Ultra/Supra class boards):
 - **TUI display**: cyberpunk-style interface with ANSI-art GH/s, system stats,
   progress bars and a scrolling log. `--log-to-console` disables it.
 - **Logging**: `bitaxepid_monitor.log` plus a CSV tuning log.
-- **Optional metrics endpoint**: JSON over HTTP on port 8093 for Prometheus and
-  Grafana, enabled with `--serve-metrics`.
+- **Optional metrics endpoint**: JSON over HTTP on port 8093, enabled with
+  `--serve-metrics`. Note it serves plain JSON, not the Prometheus text
+  exposition format, so Prometheus cannot scrape it directly; it is useful as-is
+  for a browser, `curl`, or anything that reads JSON.
 
 ## Installation
 
@@ -82,7 +84,34 @@ bash scripts/setup.sh
 The scripts under `scripts/` can be run from any directory; they resolve paths
 relative to the repository root.
 
-## Podman
+## Containers
+
+### docker compose
+
+The easiest way to leave the tuner running on a machine that is already on all
+the time (an Umbrel node, a Raspberry Pi, a NAS):
+
+```bash
+cp .env.example .env      # put your miner IP in BITAXEPID_MINER_IP
+docker compose up -d --build
+docker compose logs -f
+```
+
+`docker compose down` stops it. The default profile is `safe-BM1370.yaml`
+(conservative limits, see below); change `BITAXEPID_CONFIG` in `.env` for a
+different one, or unset it to use the factory limits of whichever chip the miner
+reports.
+
+The tuning CSV and the snapshot are written to `./data`, which is mounted into
+the container, so they survive `docker compose down`. Metrics are published on
+the host port set by `BITAXEPID_METRICS_PORT` (8093 by default).
+
+The container talks to the miner over HTTP on the LAN through the default bridge
+network: it needs no extra privileges and no host networking. It also means it
+cannot discover the miner by mDNS, so give the miner a fixed address — a DHCP
+reservation in your router is enough.
+
+### podman
 
 ```bash
 podman build --tag bitaxepid-container .
@@ -91,6 +120,36 @@ podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
 
 Extra flags are passed through to the tuner, so
 `podman run ... bitaxepid-container 192.168.68.111 --manage-pools` works.
+
+## Safe limits
+
+`MIN_VOLTAGE`, `MAX_VOLTAGE`, `MIN_FREQUENCY` and `MAX_FREQUENCY` are hard
+limits: no value outside that range is ever sent to the miner. Both paths that
+write to the hardware are clamped — the initial value (in `validate_config`,
+after the command-line overrides are applied) and every proposal from the tuning
+strategy (at the end of `apply_strategy`). A clamped initial value is logged as
+a warning rather than being applied silently.
+
+`TARGET_TEMP` is not a limit but a setpoint: above it, the tuner lowers
+frequency first and then voltage, one step per sample.
+
+`safe-BM1370.yaml` is a conservative profile for the Bitaxe Gamma, meant to be
+passed with `--config` on top of `BM1370.yaml`:
+
+```bash
+python bitaxepid.py --ip 192.168.68.111 --config safe-BM1370.yaml
+```
+
+It caps frequency at 500 MHz (factory 625) and voltage at 1150 mV (factory
+1250), targets 55 °C, and lowers `HASHRATE_SETPOINT` to something reachable
+within those caps — an unreachable setpoint keeps the PID asking for more
+forever and pins it against the voltage ceiling for nothing. Write your own
+profile the same way for a different chip; every key it does not declare is
+inherited from the chip YAML.
+
+A profile passed with `--config` must exist and must be readable: the program
+exits rather than falling back to the chip defaults, because silently running
+with factory limits when you believe otherwise is worse than not starting.
 
 ## Usage
 

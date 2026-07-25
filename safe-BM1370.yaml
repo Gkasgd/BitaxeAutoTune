@@ -49,7 +49,9 @@ SAMPLE_INTERVAL: 60
 # dejarlo activado en un fichero.
 MANAGE_MINER_POOLS: FALSE
 
-# Metricas en http://<host>:8093/metrics para Prometheus o Grafana.
+# Metricas en JSON en http://<host>:8093/metrics. Sirve tambien para
+# comprobar de un vistazo que este perfil se cargo: la respuesta incluye
+# MAX_VOLTAGE, MAX_FREQUENCY y TARGET_TEMP.
 METRICS_SERVE: TRUE
 
 # Ficheros propios, para no mezclar el historial de este perfil con el del
