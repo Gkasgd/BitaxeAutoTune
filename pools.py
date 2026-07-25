@@ -12,7 +12,6 @@ import time
 import socket
 import yaml
 import statistics
-import inspect
 from typing import List, Dict, Union, Optional, Any
 import os
 
@@ -177,8 +176,6 @@ def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
             yaml.safe_dump(updated_pools, f, default_flow_style=False, sort_keys=False)
 
         # If successful, rename to the actual file
-        import os
-
         os.replace(temp_file, yaml_file)
         print(f"\nSuccessfully updated {yaml_file} with new latency data")
 

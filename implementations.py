@@ -38,7 +38,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.live import Live
-from rich import box
 import pyfiglet
 from logging import getLogger
 import yaml
