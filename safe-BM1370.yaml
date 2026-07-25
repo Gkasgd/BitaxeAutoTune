@@ -1,0 +1,58 @@
+# safe-BM1370.yaml — perfil conservador para BM1370 (Bitaxe Gamma / 601)
+#
+# Se pasa con --config y sus claves se aplican ENCIMA de BM1370.yaml, que el
+# tuner elige solo leyendo el ASICModel del miner. Solo hace falta declarar lo
+# que se quiere cambiar; el resto se hereda.
+#
+#   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370.yaml
+#
+# Limites de fabrica del BM1370 para comparar: 1000-1250 mV y 400-625 MHz.
+# Este perfil se queda por debajo en ambos.
+
+# --- Los tres topes de seguridad -------------------------------------------
+
+# El tuner baja frecuencia (y luego voltaje) en cuanto se pasa de aqui.
+TARGET_TEMP: 55.0
+
+# Tope duro de frecuencia. 500 en lugar de los 625 de fabrica.
+MAX_FREQUENCY: 500
+
+# Tope duro de voltaje. 1150 en lugar de los 1250 de fabrica.
+MAX_VOLTAGE: 1150
+
+# --- Arranque conservador --------------------------------------------------
+# Se arranca por debajo de los topes y se deja subir al PID, en vez de empezar
+# arriba y bajar. Asi el primer minuto tampoco pasa por un punto caliente.
+INITIAL_FREQUENCY: 450
+INITIAL_VOLTAGE: 1100
+
+# --- Coherencia con los topes ---------------------------------------------
+# El setpoint de hashrate es el objetivo que persigue el PID. Con la frecuencia
+# limitada a 500 MHz no se pueden alcanzar los ~500 GH/s del perfil de fabrica,
+# y un setpoint inalcanzable mantiene al controlador pidiendo mas para siempre:
+# acaba pegado al techo de voltaje sin ganar nada. Se baja a algo alcanzable
+# dentro de los limites.
+HASHRATE_SETPOINT: 400
+
+# El limite de potencia se aplica con un margen del 7.5% (POWER_LIMIT * 1.075),
+# asi que 13.0 empieza a bajar voltaje alrededor de los 14 W.
+POWER_LIMIT: 13.0
+
+# Muestreo cada 60 s: el hardware tarda en estabilizarse tras un cambio, y
+# medir mas a menudo hace que el PID reaccione a ruido.
+SAMPLE_INTERVAL: 60
+
+# --- Comportamiento -------------------------------------------------------
+
+# No tocar la configuracion de pools del miner. Si algun dia se quiere lo
+# contrario, es mejor decirlo con --manage-pools en esa ejecucion concreta que
+# dejarlo activado en un fichero.
+MANAGE_MINER_POOLS: FALSE
+
+# Metricas en http://<host>:8093/metrics para Prometheus o Grafana.
+METRICS_SERVE: TRUE
+
+# Ficheros propios, para no mezclar el historial de este perfil con el del
+# perfil de fabrica.
+LOG_FILE: "bitaxepid_tuning_log_BM1370_safe.csv"
+SNAPSHOT_FILE: "bitaxepid_snapshot_BM1370_safe.json"
