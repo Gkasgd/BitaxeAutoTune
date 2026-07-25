@@ -7,7 +7,7 @@ uv venv
 source .venv/bin/activate
 
 # Install required Python packages
-# uv pip install pyfiglet rich simple-pid logging requests argparse
+# Las dependencias se declaran en requirements.txt (no duplicar la lista aqui)
 uv pip install --requirement requirements.txt
 
 # Deactivate the virtual environment

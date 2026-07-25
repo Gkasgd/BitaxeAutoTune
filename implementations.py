@@ -14,7 +14,8 @@ Usage:
     >>> logger.log_to_csv("2025-03-11 10:00:00", 485, 1200, 500, 48, {"PID_FREQ_KP": 0.2}, 14.6, 4812.5, 3001.25, 1312, 485, 3870)
 
 Dependencies:
-    - urllib3, pyyaml, simple_pid, rich, pyfiglet, csv, json, os, time, typing
+    - Terceros: urllib3, pyyaml, simple_pid, rich, pyfiglet
+    - Estandar: csv, json, logging, os, time, typing
 """
 
 import csv

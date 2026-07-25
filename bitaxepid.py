@@ -12,7 +12,8 @@ Usage:
     python bitaxepid.py --ip <miner_ip> [--pools-file pools2.yaml] [--logging-level debug] [--serve-metrics]
 
 Dependencies:
-    - requests, rich, pyyaml, typing, http.server, socketserver, threading
+    - Terceros: rich, pyyaml, simple_pid, pyfiglet, urllib3
+    - Estandar: argparse, logging, signal, sys, time, http.server, socketserver, threading, typing
 """
 
 import argparse
