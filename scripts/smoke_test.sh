@@ -50,6 +50,63 @@ done
 find "$ROOT" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
 
 # ---------------------------------------------------------------------------
+# 1b. Nombres libres: variables o funciones que un modulo usa pero no define ni
+#     importa. Esto NO lo detecta py_compile, y tampoco necesariamente el import
+#     del modulo, porque el fallo solo salta al ejecutar la linea afectada. Al
+#     mover codigo entre modulos es el error mas facil de cometer: te llevas la
+#     clase y te dejas el import.
+# ---------------------------------------------------------------------------
+echo
+echo "nombres libres:"
+libres="$("$PY" - "$ROOT" <<'PYEOF'
+import ast
+import builtins
+import glob
+import os
+import sys
+
+root = sys.argv[1]
+paths = sorted(glob.glob(os.path.join(root, "*.py"))) + sorted(
+    glob.glob(os.path.join(root, "tests", "*.py"))
+)
+for path in paths:
+    name = os.path.relpath(path, root)
+    try:
+        tree = ast.parse(open(path).read())
+    except SyntaxError as exc:
+        print(f"FAIL|{name} no parsea: {exc}")
+        continue
+    defined = set(dir(builtins)) | {"__file__", "__name__", "self"}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                defined.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            defined.add(node.id)
+        elif isinstance(node, ast.arg):
+            defined.add(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            defined.add(node.name)
+    used = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    missing = sorted(used - defined)
+    if missing:
+        print(f"FAIL|{name} usa nombres que no define ni importa: {', '.join(missing)}")
+    else:
+        print(f"PASS|{name} sin nombres libres")
+PYEOF
+)"
+while IFS='|' read -r status msg; do
+  [ -z "$status" ] && continue
+  if [ "$status" = "PASS" ]; then ok "$msg"; else bad "$msg"; fi
+done <<< "$libres"
+
+# ---------------------------------------------------------------------------
 # 2. Dependencias de terceros
 # ---------------------------------------------------------------------------
 echo
