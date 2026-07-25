@@ -1,69 +1,119 @@
 # BitaxePID Auto-Tuner
+
 ![logo](docs/assets/bitaxepid-logo.jpg)
 
 ## Overview
 
-`bitaxepid.py` is an auto-tuning utility for the Bitaxe 601 Gamma, an open-source Bitcoin ASIC miner built on the Bitaxe Ultra platform with the BM1366 ASIC. This script optimizes miner performance by dynamically adjusting core voltage and frequency to hit a target hashrate while managing temperature and power usage. It uses dual PID controllers (via `simple-pid`) for precise tuning, offers a temperature-only mode with `--temp-watch`, and provides a cyberpunk-themed TUI for real-time monitoring. Tuning data is logged to CSV and JSON files for analysis and persistence.
+BitaxePID is an auto-tuning utility for Bitaxe open-source Bitcoin ASIC miners
+(BM1366, BM1368, BM1370 and BM1397). It optimizes miner performance by
+dynamically adjusting core voltage and frequency to hit a target hashrate while
+keeping temperature and power within limits. It uses dual PID controllers (via
+`simple-pid`) and provides a cyberpunk-themed TUI for real-time monitoring.
+Tuning data is logged to CSV and persisted to a JSON snapshot so a restart
+resumes where the previous run left off.
 
 ### Note
-Upgrades may require updates to all files. You should either download the FULL release for a version, or clone the main repo.
+
+Upgrades may require updates to all files. You should either download the FULL
+release for a version, or clone the main repo.
 
 ![example running](docs/assets/screenshot6.jpg)
 
 ---
 
 ### Intent
-- **Performance Optimization**: Adjusts voltage (1100–2400 mV) and frequency (400–550 MHz, in 25 MHz steps) to meet a user-defined hashrate setpoint using PID control.
-- **Thermal Management**: Ensures safe operation by reducing settings when temperature exceeds the target, using the EMC2101 sensor near the BM1366. In `--temp-watch` mode, this takes precedence over hashrate goals.
-- **Stability**: Persists settings across runs with a snapshot file, resets PID on stagnation, and avoids unstable adjustments.
-- **User Experience**: Features a rich TUI with ANSI-art hashrate display, system stats, progress bars, and logs, alongside detailed file-based logging.
 
-### Hardware Context
-The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
+- **Performance optimization**: adjusts voltage and frequency within the limits
+  declared in the chip's YAML file to meet a user-defined hashrate setpoint
+  using PID control.
+- **Thermal and power management**: safety comes before the hashrate target. If
+  temperature exceeds `TARGET_TEMP` or power exceeds `POWER_LIMIT * 1.075`, the
+  tuner lowers settings even though that means missing the setpoint.
+- **Stability**: persists settings across runs with a snapshot file and resets
+  the PID controllers on stagnation.
+- **Non-intrusive by default**: BitaxePID does not touch the miner's stratum
+  pool configuration unless you explicitly allow it. See
+  [Pool management](#pool-management).
+- **User experience**: a rich TUI with ANSI-art hashrate display, system stats,
+  progress bars and a scrolling log, alongside file-based logging.
+
+### Hardware context
+
+The Bitaxe family (values below for the Ultra/Supra class boards):
+
 - BM1366 ASIC: 0.021 J/GH efficiency.
-- Power: 5V DC, 15W max, via TI TPS40305 buck regulator and Maxim DS4432U+ DAC (0.04V–2.4V core voltage).
-- Control: ESP32-S3-WROOM-1 for WiFi/API, with INA260 power meter and EMC2101 for fan/temp monitoring.
-- Cooling: Requires a 40x40mm fan.
+- Power: 5V DC, 15W max, via TI TPS40305 buck regulator and Maxim DS4432U+ DAC.
+- Control: ESP32-S3-WROOM-1 for WiFi/API, with INA260 power meter and EMC2101
+  for fan/temperature monitoring.
+- Cooling: requires a 40x40mm fan.
 
 ## Features
 
-- **Model-Specific Configuration**: Load custom settings for different hardware models or tuning scenarios using a YAML configuration file via the `--config` switch.
-- **PID Control**: Dual PID controllers tune frequency (`Kp=0.1`, `Ki=0.01`, `Kd=0.05`) and voltage (`Kp=0.05`, `Ki=0.005`, `Kd=0.02`) to achieve the hashrate setpoint, with `--temp-watch` overriding to focus on temperature.
-- **Safety Constraints**: Respects hardware limits (15W power, 2400 mV max voltage, 400 MHz min frequency).
-- **Snapshot Persistence**: Saves settings to `bitaxepid_snapshot.json` for continuity across runs.
-- **TUI Display**: Cyberpunk-style interface with integer GH/s ANSI art, system stats (temp, power, voltage), progress bars, and a scrolling log.
-- **Logging**: Outputs to `bitaxepid_monitor.log` and `bitaxepid_tuning_log.csv`, with an optional `--log-to-console` mode to disable the TUI.
+- **Model-specific configuration**: one YAML per ASIC model, plus an optional
+  user YAML that overrides individual keys via `--config`.
+- **PID control**: two controllers, one for frequency and one for voltage, with
+  gains defined per model in the YAML file.
+- **Safety constraints**: respects the power limit and the voltage/frequency
+  bounds of the configured chip.
+- **Snapshot persistence**: saves settings to `bitaxepid_snapshot_<model>.json`.
+- **TUI display**: cyberpunk-style interface with ANSI-art GH/s, system stats,
+  progress bars and a scrolling log. `--log-to-console` disables it.
+- **Logging**: `bitaxepid_monitor.log` plus a CSV tuning log.
+- **Optional metrics endpoint**: JSON over HTTP on port 8093 for Prometheus and
+  Grafana, enabled with `--serve-metrics`.
 
 ## Installation
 
-1. **Prerequisites**:
-   - Python 3.6+
-   - Install dependencies:
-     ```bash
-     pip install requests simple-pid rich pyfiglet pyyaml
-     ```
-     Or use:
-     ```bash
-     bash scripts/setup.sh  # Requires uv see https://docs.astral.sh/uv/getting-started/installation/
-     ```
-## Podman
+Requires **Python 3.9 or newer** (the code uses builtin generics such as
+`tuple[str, int]`).
+
+Install the dependencies declared in `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
 ```
+
+Or create a virtual environment with [uv](https://docs.astral.sh/uv/getting-started/installation/):
+
+```bash
+bash scripts/setup.sh
+```
+
+The scripts under `scripts/` can be run from any directory; they resolve paths
+relative to the repository root.
+
+## Podman
+
+```bash
 podman build --tag bitaxepid-container .
 podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
 ```
+
+Extra flags are passed through to the tuner, so
+`podman run ... bitaxepid-container 192.168.68.111 --manage-pools` works.
+
 ## Usage
 
-Run the script with the Bitaxe IP address and optional arguments:
+Run the tuner with the Bitaxe IP address and optional arguments:
+
 ```bash
 python bitaxepid.py --ip 192.168.68.111 --config custom_config.yaml --voltage 1200 --frequency 500
-or if you have the uv venv installation;
-bash ./scripts/start.sh 192.168.68.111
-or
-% python bitaxepid.py --help
+```
+
+Or, with the uv virtual environment created by `scripts/setup.sh`:
+
+```bash
+bash scripts/start.sh 192.168.68.111
+```
+
+Full option list:
+
+```text
 usage: bitaxepid.py [-h] [--version] --ip IP [--config CONFIG] [--user-file USER_FILE] [--pools-file POOLS_FILE]
-                    [--primary-stratum PRIMARY_STRATUM] [--backup-stratum BACKUP_STRATUM] [--stratum-user STRATUM_USER]
-                    [--fallback-stratum-user FALLBACK_STRATUM_USER] [--voltage VOLTAGE] [--frequency FREQUENCY]
-                    [--sample-interval SAMPLE_INTERVAL] [--log-to-console] [--logging-level {info,debug}] [--serve-metrics]
+                    [--primary-stratum PRIMARY_STRATUM] [--backup-stratum BACKUP_STRATUM]
+                    [--stratum-user STRATUM_USER] [--fallback-stratum-user FALLBACK_STRATUM_USER] [--voltage VOLTAGE]
+                    [--frequency FREQUENCY] [--sample-interval SAMPLE_INTERVAL] [--log-to-console]
+                    [--logging-level {info,debug}] [--serve-metrics] [--manage-pools]
 
 BitaxePID Auto-Tuner
 
@@ -93,13 +143,57 @@ options:
   --logging-level {info,debug}
                         Logging level
   --serve-metrics       Serve metrics via HTTP on port 8093 (default: False)
+  --manage-pools        Permitir que BitaxePID reconfigure los pools stratum del miner y lo reinicie al arrancar
+                        (default: False, no se toca la configuracion de pools existente)
+```
 
-### Configuration Notes
-The script loads default settings from an ASIC model-specific YAML file (e.g., BM1366.yaml).
-If --config is provided, it overrides the ASIC model defaults.
-Options like --voltage, --frequency, and --sample-interval override corresponding values from the configuration files when specified.
+## Pool management
 
-### Example Configuration File (`BM1366.yaml`)
+By default BitaxePID **leaves the miner's stratum configuration alone**. Your
+miner may be pointed at a pool you chose deliberately, and rewriting that
+without being asked is intrusive. With pool management disabled the tuner reads
+the miner's state, adjusts voltage and frequency, and nothing else — it does not
+call `set_stratum`, does not measure pool latencies and does not rewrite
+`pools.yaml`.
+
+Enable it either per run or in the configuration file:
+
+```bash
+python bitaxepid.py --ip 192.168.68.111 --manage-pools
+```
+
+```yaml
+MANAGE_MINER_POOLS: TRUE
+```
+
+Two consequences worth knowing before you enable it:
+
+- BitaxePID measures the latency of every pool in `pools.yaml`, picks the two
+  fastest, writes them to the miner and **restarts it**. Give it a couple of
+  minutes to come back.
+- Conversely, with pool management disabled the miner is **not** restarted at
+  startup either, because the restart is part of the stratum sequence. This is
+  deliberate.
+
+Explicit endpoints (`--primary-stratum`, `PRIMARY_STRATUM` in the config) also
+require `--manage-pools`: without it they are stored but never applied.
+
+## Configuration notes
+
+Default settings come from the ASIC model YAML file (`BM1366.yaml`,
+`BM1368.yaml`, `BM1370.yaml`, `BM1397.yaml`). If `--config` is provided, its
+keys override the model defaults. Command-line options such as `--voltage`,
+`--frequency` and `--sample-interval` override both.
+
+The following keys are mandatory; the program exits if any is missing:
+`INITIAL_VOLTAGE`, `INITIAL_FREQUENCY`, `SAMPLE_INTERVAL`, `LOG_FILE`,
+`SNAPSHOT_FILE`, `POOLS_FILE`, `PID_FREQ_KP`, `PID_FREQ_KI`, `PID_FREQ_KD`,
+`PID_VOLT_KP`, `PID_VOLT_KI`, `PID_VOLT_KD`, `MIN_VOLTAGE`, `MAX_VOLTAGE`,
+`MIN_FREQUENCY`, `MAX_FREQUENCY`, `VOLTAGE_STEP`, `FREQUENCY_STEP`,
+`HASHRATE_SETPOINT`, `TARGET_TEMP`, `POWER_LIMIT`.
+
+### Example configuration file (`BM1366.yaml`)
+
 ```yaml
 # BM1366.yaml
 INITIAL_FREQUENCY: 485       # "485 (default)" from BM1366DropdownFrequency
@@ -111,7 +205,7 @@ MAX_VOLTAGE: 1300            # highest available voltage in BM1366CoreVoltage
 FREQUENCY_STEP: 25
 VOLTAGE_STEP: 10
 TARGET_TEMP: 55.0
-SAMPLE_INTERVAL: 5
+SAMPLE_INTERVAL: 60
 POWER_LIMIT: 15.0
 HASHRATE_SETPOINT: 525
 PID_FREQ_KP: 0.2
@@ -123,62 +217,128 @@ PID_VOLT_KD: 0.02
 LOG_FILE: "bitaxepid_tuning_log_BM1366.csv"
 SNAPSHOT_FILE: "bitaxepid_snapshot_BM1366.json"
 POOLS_FILE: "pools.yaml"
-METRICS_SERVE: FALSE
-USER_FILE: "user.yaml" # only used if stratumuser is blank on Bitaxe. Force write with --stratum-user
+METRICS_SERVE: false         # yaml boolean lowercase true/false
+MANAGE_MINER_POOLS: FALSE    # see "Pool management" above
+USER_FILE: "user.yaml"       # only used if stratumUser is blank on the Bitaxe
 # PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
 # BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
 ```
 
 ## What is a PID controller?
 
-A PID controller is a widely used feedback system that continuously adjusts a process to reach a desired target by combining three key actions: the proportional term, which reacts to the current error between the setpoint and the measured value; the integral term, which accumulates past errors to eliminate steady-state discrepancies; and the derivative term, which predicts future errors based on the rate of change. This blend of immediate response, historical correction, and predictive adjustment allows the controller to improve system stability and performance across many applications—from motor speed and position control to temperature regulation—without relying on complex mathematical theory.
+A PID controller is a widely used feedback system that continuously adjusts a
+process to reach a desired target by combining three actions: the proportional
+term, which reacts to the current error between the setpoint and the measured
+value; the integral term, which accumulates past errors to eliminate
+steady-state discrepancies; and the derivative term, which predicts future
+errors based on the rate of change. This blend of immediate response, historical
+correction and predictive adjustment improves stability and performance across
+many applications — from motor speed control to temperature regulation.
 
 ## What is `simple-pid`?
 
-`simple-pid` is a Python library that implements a PID (Proportional-Integral-Derivative) controller, a feedback mechanism widely used to maintain a target value (here, hashrate). In this project:
-- **How It Works**: The PID controller calculates an adjustment based on the error (difference between current hashrate and setpoint). It uses three terms:
-  - **Proportional (P)**: Reacts to the current error (e.g., boosts frequency if hashrate is low).
-  - **Integral (I)**: Accounts for past errors over time, correcting persistent deviations.
-  - **Derivative (D)**: Predicts future error trends, dampening overshoots.
-- **Role**: Two PID instances (`pid_freq` and `pid_volt`) adjust frequency and voltage, respectively, to stabilize hashrate while respecting hardware limits. The conservative tuning (`Kp`, `Ki`, `Kd`) ensures smooth changes despite discrete steps and hardware delays.
+`simple-pid` is a Python library that implements a PID controller. In this
+project:
+
+- **How it works**: the controller computes an adjustment from the error
+  (difference between current hashrate and setpoint), using the proportional
+  term to react to the present error, the integral term to correct persistent
+  deviations, and the derivative term to dampen overshoots.
+- **Role**: two PID instances (`pid_freq` and `pid_volt`) adjust frequency and
+  voltage respectively to stabilize hashrate while respecting hardware limits.
+  The conservative gains keep changes smooth despite discrete steps and hardware
+  delays.
 
 ### Behavior
-- **Normal Mode**: PID controllers optimize for hashrate, overridden by temperature (> `target_temp`) or power (> 15W * 1.075) constraints. Stagnation resets PID to avoid plateaus.
-- **Temp-Watch Mode**: Bypasses PID, using simple threshold logic to lower frequency or voltage when temperature exceeds the target, ignoring hashrate.
 
-## PID Controllers
+PID output drives the hashrate towards the setpoint, but it is overridden when
+temperature exceeds `TARGET_TEMP` or power exceeds `POWER_LIMIT * 1.075`, in
+which case voltage or frequency come down. Prolonged stagnation resets the
+controllers to escape a plateau. Every decision is printed with its reason, so
+you can see why the tuner moved.
 
-- **Frequency PID**: Adjusts frequency in 25 MHz steps to track hashrate (`Kp=0.1`, `Ki=0.01`, `Kd=0.05`), balancing speed and stability.
-- **Voltage PID**: Tunes voltage (`Kp=0.05`, `Ki=0.005`, `Kd=0.02`) to support frequency changes, prioritizing stability with slower integration.
-- **Tuning**: Parameters are conservative to prevent oscillations; adjust in the YAML configuration file or via command-line arguments for testing.
+Gains, steps and limits live in the model YAML file; tune them there rather than
+in the code.
 
-This script demonstrates PID control applied to hardware tuning, blending precision with practical constraints.
+## Architecture
 
-## Clean Architecture
+Eleven flat modules, one responsibility each, no subpackages and no abstract
+base class layer:
 
-The script has been refactored to follow clean architecture principles, separating concerns into distinct layers:
-- **Domain Layer**: Contains core business logic, such as PID tuning strategies and safety constraints.
-- **Application Layer**: Coordinates the tuning process, managing interactions between domain logic, infrastructure, and presentation.
-- **Infrastructure Layer**: Handles external interactions, including HTTP requests to the Bitaxe API, file I/O for logging and snapshots, and configuration loading.
-- **Presentation Layer**: Manages the TUI for real-time monitoring.
+| Module | Responsibility |
+| --- | --- |
+| `bitaxepid.py` | Entry point: wires everything together and handles signals. |
+| `cli.py` | Command-line arguments. |
+| `config.py` | Loads and validates the YAML configuration. |
+| `api_client.py` | HTTP client for the miner's API (`urllib3`). |
+| `stratum.py` | Pool file handling, endpoint parsing and latency measurement. |
+| `tuning.py` | The PID strategy: decides the next voltage/frequency pair. |
+| `tuning_manager.py` | The tuning loop and the startup sequence. |
+| `logger.py` | CSV tuning log and JSON snapshot. |
+| `metrics_server.py` | Optional HTTP metrics endpoint on port 8093. |
+| `ui_rich.py` | The TUI, plus the colour theme and the shared `Console`. |
+| `ui_null.py` | No-op UI used by `--log-to-console`. |
 
-This modular design improves maintainability, testability, and scalability, making it easier to extend the script for new features or hardware models.
+Dependencies only point one way: `bitaxepid.py` composes the objects, and the
+lower modules never import it.
 
-## Diagram
+```mermaid
+graph TD
+    main[bitaxepid.py] --> cli[cli.py]
+    main --> config[config.py]
+    main --> api[api_client.py]
+    main --> tuning[tuning.py]
+    main --> tm[tuning_manager.py]
+    main --> logger[logger.py]
+    main --> metrics[metrics_server.py]
+    main --> uirich[ui_rich.py]
+    main --> uinull[ui_null.py]
+    main --> stratum[stratum.py]
+    tm --> api
+    tm --> stratum
+    tm --> logger
+    tm --> metrics
+    tm --> config
+    tm --> tuning
+    tm --> uirich
+    tm --> uinull
+    tuning --> uirich
+```
 
-![](docs/assets/appflow.png)
-![](docs/assets/entities.png)
+Startup order matters and is explicit: constructing a `TuningManager` has no
+side effects, and everything that talks to the miner happens in
+`connect_and_configure()`. That is what makes the manager testable without a
+miner on the network.
+
+`stratum.py` can also be run on its own to measure pools and print the result:
+
+```bash
+python stratum.py            # YAML to stdout, log to stderr
+```
+
+## Tests
+
+Unit tests need no miner and no network:
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+`scripts/smoke_test.sh` is a broader safety net: it byte-compiles every module,
+checks by AST analysis that no module uses a name it neither defines nor imports
+(the failure mode of moving code between files), validates the configuration
+files against the keys the code actually requires, checks `requirements.txt`
+coverage and then runs the unit tests. Checks that need third-party packages are
+skipped, not failed, when those packages are absent.
+
+```bash
+bash scripts/smoke_test.sh
+```
 
 ## Credits
 
-Based on concepts and code from [Hurllz/bitaxe-temp-monitor](https://github.com/Hurllz/bitaxe-temp-monitor/). 
+Based on concepts and code from
+[Hurllz/bitaxe-temp-monitor](https://github.com/Hurllz/bitaxe-temp-monitor/).
 
-Extensively refactored to integrate `simple-pid` for advanced control and to follow clean architecture principles.
-```
-
-### Key Updates
-- **Installation**: Added `pyyaml` to the dependency list to support YAML configuration parsing.
-- **Usage**: Updated the example to include the `--config` switch and clarified that command-line arguments override YAML settings.
-- **Configuration**: Added a new section explaining the `--config` switch, including an example YAML file.
-- **Features**: Highlighted the new model-specific configuration capability.
-- **Clean Architecture**: Added a section describing the refactoring into Domain, Application, Infrastructure, and Presentation layers, emphasizing the benefits.
+Extensively refactored to integrate `simple-pid` for advanced control and to
+split the codebase into single-responsibility modules.
