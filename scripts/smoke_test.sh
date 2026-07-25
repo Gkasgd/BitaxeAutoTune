@@ -233,6 +233,26 @@ else
   bad "falta requirements.txt"
 fi
 
+# ---------------------------------------------------------------------------
+# 6. Tests unitarios de tests/, si las dependencias lo permiten.
+# ---------------------------------------------------------------------------
+echo
+echo "tests unitarios:"
+if [ -d "$ROOT/tests" ]; then
+  if [ "$DEPS_OK" = "1" ]; then
+    if out="$(cd "$ROOT" && "$PY" -m unittest discover -s tests -t . 2>&1)"; then
+      ok "unittest discover ($(grep -oE 'Ran [0-9]+ test' <<< "$out" | head -1))"
+    else
+      bad "unittest discover"
+      echo "$out" | tail -12 | sed 's/^/          /'
+    fi
+  else
+    skipped "unittest discover (faltan dependencias)"
+  fi
+else
+  skipped "no hay directorio tests/"
+fi
+
 echo
 echo "resultado: $pass ok, $fail fallos, $skip saltados"
 [ "$fail" -eq 0 ] || exit 1

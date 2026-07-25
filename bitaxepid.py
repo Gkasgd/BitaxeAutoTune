@@ -25,7 +25,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from threading import Thread
 from typing import Dict, Any, Optional, List
-from urllib.parse import urlparse
 from interfaces import (
     IBitaxeAPIClient,
     ILogger,
@@ -41,7 +40,7 @@ from implementations import (
     NullTerminalUI,
     PIDTuningStrategy,
 )
-from pools import get_fastest_pools
+from pools import get_fastest_pools, parse_stratum_url
 from rich.console import Console
 import json
 import os
@@ -86,30 +85,6 @@ def start_metrics_server() -> None:
     server_thread.start()
     logging.info("Metrics server started on http://0.0.0.0:8093/metrics")
 
-
-def parse_stratum_url(url: str) -> Dict[str, Any]:
-    """
-    Parse a stratum URL into hostname and port components.
-
-    Args:
-        url (str): The stratum URL (e.g., "stratum+tcp://solo.ckpool.org:3333").
-
-    Returns:
-        Dict[str, Any]: Dictionary with 'hostname' and 'port' keys.
-
-    Raises:
-        ValueError: If the URL scheme is invalid or lacks hostname/port.
-
-    Example:
-        >>> parse_stratum_url("stratum+tcp://solo.ckpool.org:3333")
-        {'hostname': 'solo.ckpool.org', 'port': 3333}
-    """
-    parsed = urlparse(url)
-    if parsed.scheme != "stratum+tcp":
-        raise ValueError(f"Invalid scheme: {parsed.scheme}. Expected 'stratum+tcp'")
-    if not parsed.hostname or not parsed.port:
-        raise ValueError("Stratum URL must include both hostname and port")
-    return {"hostname": parsed.hostname, "port": parsed.port}
 
 
 class TuningManager:

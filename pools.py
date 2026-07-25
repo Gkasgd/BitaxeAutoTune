@@ -12,29 +12,59 @@ import socket
 import yaml
 import statistics
 from typing import List, Dict, Union, Optional, Any
+from urllib.parse import urlparse
 import os
 
 
 # --- Pool Management Functions ---
-def parse_endpoint(endpoint_str: str) -> tuple[str, int]:
+STRATUM_SCHEME = "stratum+tcp"
+
+
+def parse_stratum_url(url: str) -> Dict[str, Any]:
     """
-    Parses a pool endpoint string into hostname and port components.
+    Parse a stratum endpoint into its hostname and port.
+
+    Unica implementacion del parseo de endpoints stratum del proyecto: la usan
+    tanto la medicion de latencias como la configuracion que se envia al miner.
+
+    Acepta el endpoint con o sin esquema; si falta, se asume "stratum+tcp://".
+    El puerto es obligatorio. El hostname se normaliza a minusculas y se
+    descarta la informacion de usuario ("user@host") y la ruta, igual que hace
+    urlparse.
+
     Args:
-        endpoint_str: Pool endpoint string (e.g., 'stratum+tcp://host:port').
+        url (str): Endpoint stratum (p.ej. "stratum+tcp://solo.ckpool.org:3333"
+            o "solo.ckpool.org:3333").
+
     Returns:
-        A tuple containing hostname and port number.
+        Dict[str, Any]: Diccionario con las claves 'hostname' y 'port'.
+
     Raises:
-        ValueError: If the endpoint format is invalid or missing port.
+        ValueError: Si el esquema no es stratum+tcp, si falta el hostname o el
+            puerto, o si el puerto no es un entero entre 0 y 65535.
+
     Example:
-        >>> parse_endpoint('stratum+tcp://solo.ckpool.org:3333')
-        ('solo.ckpool.org', 3333)
+        >>> parse_stratum_url("stratum+tcp://solo.ckpool.org:3333")
+        {'hostname': 'solo.ckpool.org', 'port': 3333}
+        >>> parse_stratum_url("solo.ckpool.org:3333")
+        {'hostname': 'solo.ckpool.org', 'port': 3333}
     """
-    if endpoint_str.startswith("stratum+tcp://"):
-        endpoint_str = endpoint_str[len("stratum+tcp://") :]
-    if ":" in endpoint_str:
-        hostname, port_str = endpoint_str.split(":", 1)
-        return hostname, int(port_str)
-    raise ValueError(f"Invalid endpoint, missing port: {endpoint_str}")
+    candidate = url.strip()
+    if "://" not in candidate:
+        # Tolerancia heredada de la medicion de latencias, donde los endpoints
+        # de pools.yaml podian venir sin esquema.
+        candidate = f"{STRATUM_SCHEME}://{candidate}"
+
+    parsed = urlparse(candidate)
+    if parsed.scheme != STRATUM_SCHEME:
+        raise ValueError(
+            f"Invalid scheme: {parsed.scheme}. Expected '{STRATUM_SCHEME}'"
+        )
+    # urlparse valida el rango del puerto y lanza ValueError si no es entero.
+    port = parsed.port
+    if not parsed.hostname or port is None:
+        raise ValueError("Stratum URL must include both hostname and port")
+    return {"hostname": parsed.hostname, "port": port}
 
 
 def load_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
@@ -139,7 +169,8 @@ def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
     for pool in pools:
         try:
             endpoint_str = pool["endpoint"]
-            hostname, port = parse_endpoint(endpoint_str)
+            parsed = parse_stratum_url(endpoint_str)
+            hostname, port = parsed["hostname"], parsed["port"]
             latency = measure_latency(hostname, port)
 
             # Create new dict with all existing data plus latency info
