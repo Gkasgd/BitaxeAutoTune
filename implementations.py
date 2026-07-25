@@ -56,6 +56,11 @@ TABLE_ROW_EVEN = "#222222"
 TABLE_ROW_ODD = "#444444"
 PROGRESS_BAR_BG = "#333333"
 
+# Instancia unica de Console para todo el proyecto. Rich no lleva bien que
+# varios Console escriban al mismo terminal: el Live de RichTerminalUI toma el
+# control de la pantalla y un Console distinto imprimiendo por su cuenta le
+# corrompe el area redibujada. Todo lo que escriba en el terminal debe pasar
+# por esta.
 console = Console()
 
 

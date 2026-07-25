@@ -41,11 +41,9 @@ from implementations import (
     PIDTuningStrategy,
 )
 from pools import get_fastest_pools, parse_stratum_url
-from rich.console import Console
 import json
 import os
 
-console = Console()
 __version__ = "1.0.3"  # add connection pool for reuse to bitaxe.
 
 # Global variable to store the latest metrics for the HTTP server (now a list of dicts)
