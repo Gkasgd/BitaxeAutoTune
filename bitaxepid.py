@@ -122,6 +122,7 @@ def main() -> None:
         primary_stratum=primary_stratum,
         backup_stratum=backup_stratum,
     )
+    tuning_manager.connect_and_configure()
 
     def signal_handler(sig: int, frame: Any) -> None:
         logging.info("Shutting down gracefully...")

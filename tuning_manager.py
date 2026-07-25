@@ -86,7 +86,30 @@ class TuningManager:
         self.pools_file = pools_file
         self.config = config
         self.user_file = user_file
+        self.primary_stratum = primary_stratum
+        self.backup_stratum = backup_stratum
+        # Se rellenan en connect_and_configure, cuando ya se ha hablado con el
+        # miner. Se inicializan aqui para que el objeto no tenga atributos a
+        # medias si alguien consulta antes de conectar.
+        self.mac_address = "unknown"
+        self.stratum_users: Dict[str, str] = {}
         logging.debug(f"User file set to: {self.user_file}")
+
+    def connect_and_configure(self) -> None:
+        """
+        Hablar con el miner: leer su estado, aplicar los pools y fijar el
+        voltaje y la frecuencia iniciales.
+
+        Esto vivia en __init__. Se separa porque construir un objeto no deberia
+        abrir conexiones, medir latencias contra pools de internet ni reiniciar
+        el hardware: hacia imposible instanciar TuningManager en un test, y
+        cualquier fallo de red se manifestaba como un constructor que llamaba a
+        sys.exit(). Ahora el llamante decide cuando se toca el miner.
+
+        Debe invocarse antes de start_tuning().
+        """
+        primary_stratum = self.primary_stratum
+        backup_stratum = self.backup_stratum
 
         system_info = self.api_client.get_system_info()
         if system_info is None:
@@ -100,7 +123,6 @@ class TuningManager:
             f"Current stratum users from API: primary='{current_stratum_user}', backup='{current_fallback_user}'"
         )
 
-        self.stratum_users = {}
         if not current_stratum_user:
             self.stratum_users = self._load_stratum_users()
             logging.debug(f"Loaded stratum users from file: {self.stratum_users}")
