@@ -26,7 +26,6 @@ from typing import Optional, Tuple
 
 from simple_pid import PID
 
-from interfaces import TuningStrategy
 from ui_rich import (
     PRIMARY_ACCENT,
     SECONDARY_ACCENT,
@@ -35,7 +34,7 @@ from ui_rich import (
 )
 
 
-class PIDTuningStrategy(TuningStrategy):
+class PIDTuningStrategy:
     """Concrete implementation of a PID-based tuning strategy for miner settings."""
 
     def __init__(

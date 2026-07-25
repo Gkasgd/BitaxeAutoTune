@@ -24,12 +24,10 @@ import logging
 import os
 from typing import Any, Dict
 
-from interfaces import ILogger
-
 logger = logging.getLogger(__name__)
 
 
-class Logger(ILogger):
+class Logger:
     """Concrete implementation for logging miner data to CSV and snapshots to JSON."""
 
     def __init__(self, log_file: str, snapshot_file: str) -> None:

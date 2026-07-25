@@ -28,12 +28,10 @@ from typing import Any, Dict, Optional
 import urllib3
 from urllib3.util.retry import Retry
 
-from interfaces import IBitaxeAPIClient
-
 logger = logging.getLogger(__name__)
 
 
-class BitaxeAPIClient(IBitaxeAPIClient):
+class BitaxeAPIClient:
     """Concrete implementation of the Bitaxe API client using urllib3 for robust communication."""
 
     def __init__(

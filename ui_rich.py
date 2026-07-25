@@ -35,8 +35,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from interfaces import ITerminalUI
-
 # Color constants for Cyberdeck TUI theme
 BACKGROUND = "#121212"
 TEXT_COLOR = "#E0E0E0"
@@ -58,7 +56,7 @@ PROGRESS_BAR_BG = "#333333"
 console = Console()
 
 
-class RichTerminalUI(ITerminalUI):
+class RichTerminalUI:
     """Rich terminal UI for displaying miner status."""
 
     def __init__(self) -> None:

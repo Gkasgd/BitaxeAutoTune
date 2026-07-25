@@ -18,10 +18,7 @@ Dependencias:
 
 from typing import Any, Dict
 
-from interfaces import ITerminalUI
-
-
-class NullTerminalUI(ITerminalUI):
+class NullTerminalUI:
     """Null implementation of the terminal UI for console-only logging."""
 
     def update(

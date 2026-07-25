@@ -26,12 +26,10 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from interfaces import IConfigLoader
-
 logger = logging.getLogger(__name__)
 
 
-class YamlConfigLoader(IConfigLoader):
+class YamlConfigLoader:
     """Concrete implementation for loading YAML configuration files."""
 
     def load_config(self, file_path: str) -> Dict[str, Any]:
@@ -62,13 +60,13 @@ class YamlConfigLoader(IConfigLoader):
 
 
 def load_config(
-    config_loader: IConfigLoader, asic_yaml: str, user_config_path: Optional[str] = None
+    config_loader: YamlConfigLoader, asic_yaml: str, user_config_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Load and merge configurations from ASIC model YAML and optional user config.
 
     Args:
-        config_loader (IConfigLoader): Loader for YAML files.
+        config_loader (YamlConfigLoader): Loader for YAML files.
         asic_yaml (str): Path to ASIC model YAML file.
         user_config_path (Optional[str]): Path to optional user config YAML.
 

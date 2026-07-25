@@ -23,17 +23,15 @@ Dependencias:
 import logging
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from interfaces import (
-    IBitaxeAPIClient,
-    IConfigLoader,
-    ILogger,
-    ITerminalUI,
-    TuningStrategy,
-)
+from api_client import BitaxeAPIClient
+from config import YamlConfigLoader
+from logger import Logger
 from metrics_server import update_metrics
 from stratum import get_fastest_pools, parse_stratum_url
+from tuning import PIDTuningStrategy
+from ui_null import NullTerminalUI
 from ui_rich import RichTerminalUI
 
 
@@ -42,11 +40,11 @@ class TuningManager:
 
     def __init__(
         self,
-        tuning_strategy: TuningStrategy,
-        api_client: IBitaxeAPIClient,
-        logger: ILogger,
-        config_loader: IConfigLoader,
-        terminal_ui: ITerminalUI,
+        tuning_strategy: PIDTuningStrategy,
+        api_client: BitaxeAPIClient,
+        logger: Logger,
+        config_loader: YamlConfigLoader,
+        terminal_ui: Union[RichTerminalUI, NullTerminalUI],
         sample_interval: float,
         initial_voltage: float,
         initial_frequency: float,
@@ -61,11 +59,11 @@ class TuningManager:
         Initialize the TuningManager with tuning parameters and miner settings.
 
         Args:
-            tuning_strategy (TuningStrategy): Strategy for adjusting voltage/frequency.
-            api_client (IBitaxeAPIClient): API client for miner communication.
-            logger (ILogger): Logger for recording tuning data.
-            config_loader (IConfigLoader): Loader for YAML configuration files.
-            terminal_ui (ITerminalUI): UI for displaying tuning status.
+            tuning_strategy (PIDTuningStrategy): Strategy for adjusting voltage/frequency.
+            api_client (BitaxeAPIClient): API client for miner communication.
+            logger (Logger): Logger for recording tuning data.
+            config_loader (YamlConfigLoader): Loader for YAML configuration files.
+            terminal_ui: UI for displaying tuning status (rich o nula).
             sample_interval (float): Interval between tuning adjustments (seconds).
             initial_voltage (float): Starting voltage in millivolts.
             initial_frequency (float): Starting frequency in MHz.
