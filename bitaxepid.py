@@ -28,17 +28,16 @@ from interfaces import (
     ITerminalUI,
     TuningStrategy,
 )
-from implementations import (
-    RichTerminalUI,
-    NullTerminalUI,
-    PIDTuningStrategy,
-)
+from implementations import PIDTuningStrategy
+from ui_null import NullTerminalUI
+from ui_rich import RichTerminalUI
 from api_client import BitaxeAPIClient
 from config import YamlConfigLoader, load_config, validate_config
 from logger import Logger
 from pools import get_fastest_pools, parse_stratum_url
 from metrics_server import start_metrics_server, update_metrics
 from cli import parse_arguments
+
 
 class TuningManager:
     """Manages the tuning process for a Bitaxe miner, adjusting settings and stratum pools."""
