@@ -3,28 +3,24 @@
 Implementations Module for BitaxePID Auto-Tuner
 
 This module provides concrete implementations of the interfaces defined in `interfaces.py` for the BitaxePID
-auto-tuner. It includes classes for interacting with the Bitaxe miner API, displaying a rich terminal UI,
-and applying a PID-based tuning strategy.
+auto-tuner. It includes the rich terminal UI, su equivalente silencioso y la
+estrategia de tuning PID.
 
-La persistencia en CSV y JSON vive en logger.py; la carga de configuracion, en config.py.
+El cliente de la API vive en api_client.py; la persistencia en CSV y JSON, en
+logger.py; la carga de configuracion, en config.py.
 
 Usage:
-    >>> from implementations import BitaxeAPIClient
-    >>> client = BitaxeAPIClient("192.168.1.1")
-    >>> system_info = client.get_system_info()
+    >>> from implementations import PIDTuningStrategy
+    >>> strategy = PIDTuningStrategy(...)
 
 Dependencies:
-    - Terceros: urllib3, simple_pid, rich, pyfiglet
-    - Estandar: json, logging, time, typing
+    - Terceros: simple_pid, rich, pyfiglet
+    - Estandar: time, typing
 """
 
-import json
 import time
 from typing import Dict, Any, Optional, Tuple
-import urllib3
-from urllib3.util.retry import Retry
 from interfaces import (
-    IBitaxeAPIClient,
     ITerminalUI,
     TuningStrategy,
 )
@@ -36,7 +32,6 @@ from rich.table import Table
 from rich.text import Text
 from rich.live import Live
 import pyfiglet
-from logging import getLogger
 
 # Color constants for Cyberdeck TUI theme
 BACKGROUND = "#121212"
@@ -57,248 +52,6 @@ PROGRESS_BAR_BG = "#333333"
 # corrompe el area redibujada. Todo lo que escriba en el terminal debe pasar
 # por esta.
 console = Console()
-
-
-class BitaxeAPIClient(IBitaxeAPIClient):
-    """Concrete implementation of the Bitaxe API client using urllib3 for robust communication."""
-
-    def __init__(
-        self, ip: str, timeout: int = 10, retries: int = 5, pool_maxsize: int = 10
-    ) -> None:
-        """
-        Initialize the Bitaxe API client with a connection pool.
-
-        Args:
-            ip (str): IP address of the Bitaxe miner (e.g., "192.168.1.1").
-            timeout (int): Timeout for each request in seconds (default: 10).
-            retries (int): Number of retries for failed requests (default: 5).
-            pool_maxsize (int): Maximum number of connections in the pool (default: 10).
-        """
-        self.bitaxepid_url = f"http://{ip}"
-        self.logger = getLogger(__name__)
-        retry_strategy = Retry(
-            total=retries,
-            backoff_factor=1,  # Exponential backoff: 1s, 2s, 4s, etc.
-            status_forcelist=[500, 502, 503, 504],  # Retry on server errors
-        )
-        self.http_pool = urllib3.HTTPConnectionPool(
-            host=ip,
-            port=80,
-            timeout=urllib3.Timeout(connect=timeout, read=timeout),
-            maxsize=pool_maxsize,
-            retries=retry_strategy,
-            block=False,
-        )
-        self.logger.info(
-            f"Initialized BitaxeAPIClient for {ip} with timeout={timeout}s, retries={retries}, pool_maxsize={pool_maxsize}"
-        )
-
-    def get_system_info(self) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve current system information from the miner.
-
-        Returns:
-            Optional[Dict[str, Any]]: System information as a dictionary (e.g., {"hashRate": 500, "temp": 48}), or None if unavailable.
-
-        Example:
-            >>> client = BitaxeAPIClient("192.168.1.1")
-            >>> info = client.get_system_info()
-            >>> info.get("hashRate")
-            500.0
-        """
-        try:
-            response = self.http_pool.request("GET", "/api/system/info")
-            if response.status == 200:
-                return json.loads(response.data.decode("utf-8"))
-            else:
-                self.logger.error(
-                    f"Failed to fetch system info: HTTP {response.status}"
-                )
-                console.print(
-                    f"[{ERROR_COLOR}]Failed to fetch system info: HTTP {response.status}[/]"
-                )
-                return None
-        except urllib3.exceptions.MaxRetryError as e:
-            self.logger.error(f"Max retries exceeded fetching system info: {e}")
-            console.print(
-                f"[{ERROR_COLOR}]Max retries exceeded fetching system info: {e}[/]"
-            )
-            return None
-        except urllib3.exceptions.TimeoutError as e:
-            self.logger.error(f"Timeout fetching system info: {e}")
-            console.print(f"[{ERROR_COLOR}]Timeout fetching system info: {e}[/]")
-            return None
-        except Exception as e:
-            self.logger.error(f"Unexpected error fetching system info: {e}")
-            console.print(
-                f"[{ERROR_COLOR}]Unexpected error fetching system info: {e}[/]"
-            )
-            return None
-
-    def set_settings(self, voltage: float, frequency: float) -> float:
-        """
-        Set voltage and frequency on the miner and return the applied frequency.
-
-        Args:
-            voltage (float): Target core voltage to set (mV).
-            frequency (float): Target frequency to set (MHz).
-
-        Returns:
-            float: The frequency applied by the miner (MHz), returned unchanged if setting fails.
-
-        Example:
-            >>> client = BitaxeAPIClient("192.168.1.1")
-            >>> applied_freq = client.set_settings(1200, 485)
-            >>> applied_freq
-            485.0
-        """
-        settings = {"coreVoltage": voltage, "frequency": frequency}
-        try:
-            response = self.http_pool.request(
-                "PATCH",
-                "/api/system",
-                body=json.dumps(settings).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-            )
-            if response.status == 200:
-                self.logger.info(
-                    f"Applied settings: Voltage={voltage}mV, Frequency={frequency}MHz"
-                )
-                console.print(
-                    f"[{PRIMARY_ACCENT}]Applied settings: Voltage={voltage}mV, Frequency={frequency}MHz[/]"
-                )
-                time.sleep(2)  # Allow settings to stabilize
-                system_info = self.get_system_info()
-                if system_info:
-                    actual_voltage = system_info.get("coreVoltage", 0)
-                    actual_freq = system_info.get("frequency", 0)
-                    if (
-                        abs(actual_voltage - voltage) > 5
-                        or abs(actual_freq - frequency) > 5
-                    ):
-                        self.logger.warning(
-                            f"Settings mismatch - Requested: {voltage}mV/{frequency}MHz, "
-                            f"Actual: {actual_voltage}mV/{actual_freq}MHz"
-                        )
-                return frequency
-            self.logger.error(f"Failed to set settings: HTTP {response.status}")
-            return frequency
-        except Exception as e:
-            self.logger.error(f"Error setting system settings: {e}")
-            console.print(f"[{ERROR_COLOR}]Error setting system settings: {e}[/]")
-            return frequency
-
-    def set_stratum(self, primary: Dict[str, Any], backup: Dict[str, Any]) -> bool:
-        """
-        Configure primary and backup stratum pools.
-
-        Args:
-            primary (Dict[str, Any]): Configuration for the primary stratum pool (e.g., {"hostname": "solo.ckpool.org", "port": 3333, "user": "user1"}).
-            backup (Dict[str, Any]): Configuration for the backup stratum pool (e.g., {"hostname": "pool.example.com", "port": 3333, "user": "user2"}).
-
-        Returns:
-            bool: True if the stratum settings were successfully applied, False otherwise.
-
-        Example:
-            >>> client = BitaxeAPIClient("192.168.1.1")
-            >>> primary = {"hostname": "solo.ckpool.org", "port": 3333, "user": "user1"}
-            >>> backup = {"hostname": "pool.example.com", "port": 3333, "user": "user2"}
-            >>> success = client.set_stratum(primary, backup)
-            >>> success
-            True
-        """
-        settings = {
-            "stratumURL": primary["hostname"],
-            "stratumPort": primary["port"],
-            "fallbackStratumURL": backup["hostname"],
-            "fallbackStratumPort": backup["port"],
-            "stratumUser": primary.get("user", ""),
-            "fallbackStratumUser": backup.get("user", ""),
-        }
-        try:
-            response = self.http_pool.request(
-                "PATCH",
-                "/api/system",
-                body=json.dumps(settings).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-            )
-            if response.status == 200:
-                self.logger.info(
-                    f"Set stratum: Primary={primary['hostname']}:{primary['port']} "
-                    f"User={primary.get('user', '')}, "
-                    f"Backup={backup['hostname']}:{backup['port']} "
-                    f"User={backup.get('user', '')}"
-                )
-                console.print(
-                    f"[{PRIMARY_ACCENT}]Set stratum configuration successfully[/]"
-                )
-                time.sleep(1)
-                system_info = self.get_system_info()
-                if system_info and not all(
-                    [
-                        system_info.get("stratumURL") == primary["hostname"],
-                        system_info.get("stratumPort") == primary["port"],
-                        system_info.get("fallbackStratumURL") == backup["hostname"],
-                        system_info.get("fallbackStratumPort") == backup["port"],
-                        system_info.get("stratumUser") == primary.get("user", ""),
-                        system_info.get("fallbackStratumUser")
-                        == backup.get("user", ""),
-                    ]
-                ):
-                    self.logger.warning("Stratum settings verification failed")
-                    return False
-                return True
-            self.logger.error(f"Failed to set stratum: HTTP {response.status}")
-            return False
-        except Exception as e:
-            self.logger.error(f"Error setting stratum endpoints: {e}")
-            console.print(f"[{ERROR_COLOR}]Error setting stratum endpoints: {e}[/]")
-            return False
-
-    def restart(self) -> bool:
-        """
-        Restart the Bitaxe miner.
-
-        Returns:
-            bool: True if the restart was successful and the miner responds, False otherwise.
-
-        Example:
-            >>> client = BitaxeAPIClient("192.168.1.1")
-            >>> success = client.restart()
-            >>> success
-            True
-        """
-        try:
-            response = self.http_pool.request("POST", "/api/system/restart")
-            if response.status == 200:
-                self.logger.info("Restarted Bitaxe miner")
-                console.print(f"[{PRIMARY_ACCENT}]Restarted Bitaxe miner[/]")
-                time.sleep(5)  # Wait for restart
-                for _ in range(3):
-                    if self.get_system_info():
-                        self.logger.info("Miner successfully restarted and responding")
-                        return True
-                    time.sleep(2)
-                self.logger.warning("Miner restart completed but not responding")
-                return False
-            self.logger.error(f"Failed to restart miner: HTTP {response.status}")
-            return False
-        except Exception as e:
-            self.logger.error(f"Error restarting Bitaxe miner: {e}")
-            console.print(f"[{ERROR_COLOR}]Error restarting Bitaxe miner: {e}[/]")
-            return False
-
-    def close(self) -> None:
-        """
-        Close the connection pool to free resources.
-
-        Example:
-            >>> client = BitaxeAPIClient("192.168.1.1")
-            >>> client.close()
-        """
-        self.http_pool.close()
-        self.logger.info("BitaxeAPIClient connection pool closed")
-        console.print(f"[{PRIMARY_ACCENT}]BitaxeAPIClient connection pool closed[/]")
 
 
 class RichTerminalUI(ITerminalUI):

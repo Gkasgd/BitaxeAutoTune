@@ -29,11 +29,11 @@ from interfaces import (
     TuningStrategy,
 )
 from implementations import (
-    BitaxeAPIClient,
     RichTerminalUI,
     NullTerminalUI,
     PIDTuningStrategy,
 )
+from api_client import BitaxeAPIClient
 from config import YamlConfigLoader, load_config, validate_config
 from logger import Logger
 from pools import get_fastest_pools, parse_stratum_url
