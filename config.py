@@ -77,8 +77,26 @@ def load_config(
         logger.error(f"ASIC model YAML file {asic_yaml} not found")
         sys.exit(1)
     config = config_loader.load_config(asic_yaml)
-    if user_config_path and os.path.exists(user_config_path):
+    if user_config_path:
+        # Un --config que no existe se ignoraba en silencio, y el programa
+        # arrancaba con los limites del YAML del chip. Cuando el fichero de
+        # usuario es justo el que baja MAX_VOLTAGE y MAX_FREQUENCY (un perfil
+        # conservador, o una configuracion montada en un contenedor), una ruta
+        # mal escrita dejaba al miner corriendo con los topes de fabrica sin
+        # decir nada. Si se pide explicitamente, tiene que existir.
+        if not os.path.exists(user_config_path):
+            logger.error(
+                f"User config file {user_config_path} not found "
+                "(se pidio con --config o USER_CONFIG)"
+            )
+            sys.exit(1)
         user_config = config_loader.load_config(user_config_path)
+        if not user_config:
+            logger.error(
+                f"User config file {user_config_path} no se pudo leer o esta "
+                "vacio: se ignorarian sus limites"
+            )
+            sys.exit(1)
         config.update(user_config)
     return config
 
