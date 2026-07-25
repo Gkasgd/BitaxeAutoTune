@@ -3,10 +3,10 @@
 Implementations Module for BitaxePID Auto-Tuner
 
 This module provides concrete implementations of the interfaces defined in `interfaces.py` for the BitaxePID
-auto-tuner. It includes classes for interacting with the Bitaxe miner API, loading YAML configurations,
-displaying a rich terminal UI, and applying a PID-based tuning strategy.
+auto-tuner. It includes classes for interacting with the Bitaxe miner API, displaying a rich terminal UI,
+and applying a PID-based tuning strategy.
 
-La persistencia en CSV y JSON vive en logger.py.
+La persistencia en CSV y JSON vive en logger.py; la carga de configuracion, en config.py.
 
 Usage:
     >>> from implementations import BitaxeAPIClient
@@ -14,7 +14,7 @@ Usage:
     >>> system_info = client.get_system_info()
 
 Dependencies:
-    - Terceros: urllib3, pyyaml, simple_pid, rich, pyfiglet
+    - Terceros: urllib3, simple_pid, rich, pyfiglet
     - Estandar: json, logging, time, typing
 """
 
@@ -25,7 +25,6 @@ import urllib3
 from urllib3.util.retry import Retry
 from interfaces import (
     IBitaxeAPIClient,
-    IConfigLoader,
     ITerminalUI,
     TuningStrategy,
 )
@@ -38,7 +37,6 @@ from rich.text import Text
 from rich.live import Live
 import pyfiglet
 from logging import getLogger
-import yaml
 
 # Color constants for Cyberdeck TUI theme
 BACKGROUND = "#121212"
@@ -301,38 +299,6 @@ class BitaxeAPIClient(IBitaxeAPIClient):
         self.http_pool.close()
         self.logger.info("BitaxeAPIClient connection pool closed")
         console.print(f"[{PRIMARY_ACCENT}]BitaxeAPIClient connection pool closed[/]")
-
-
-class YamlConfigLoader(IConfigLoader):
-    """Concrete implementation for loading YAML configuration files."""
-
-    def load_config(self, file_path: str) -> Dict[str, Any]:
-        """
-        Load configuration settings from a YAML file.
-
-        Args:
-            file_path (str): Path to the configuration file (e.g., "BM1366.yaml").
-
-        Returns:
-            Dict[str, Any]: Configuration data as a dictionary (e.g., {"INITIAL_VOLTAGE": 1200}), empty if loading fails.
-
-        Example:
-            >>> loader = YamlConfigLoader()
-            >>> config = loader.load_config("BM1366.yaml")
-            >>> config["INITIAL_VOLTAGE"]
-            1200
-        """
-        try:
-            with open(file_path, "r") as f:
-                config = yaml.safe_load(f)
-                if config is None:
-                    raise ValueError("YAML file is empty")
-                return config
-        except Exception as e:
-            console.print(
-                f"[{ERROR_COLOR}]Failed to load configuration file {file_path}: {e}[/]"
-            )
-            return {}
 
 
 class RichTerminalUI(ITerminalUI):

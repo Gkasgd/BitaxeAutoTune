@@ -13,7 +13,7 @@ Usage:
 
 Dependencies:
     - Terceros: rich, pyyaml, simple_pid, pyfiglet, urllib3
-    - Estandar: argparse, logging, os, signal, sys, time, typing
+    - Estandar: argparse, logging, signal, sys, time, typing
 """
 
 import argparse
@@ -31,17 +31,17 @@ from interfaces import (
 )
 from implementations import (
     BitaxeAPIClient,
-    YamlConfigLoader,
     RichTerminalUI,
     NullTerminalUI,
     PIDTuningStrategy,
 )
+from config import YamlConfigLoader, load_config, validate_config
 from logger import Logger
 from pools import get_fastest_pools, parse_stratum_url
 from metrics_server import start_metrics_server, update_metrics
-import os
 
 __version__ = "1.0.3"  # add connection pool for reuse to bitaxe.
+
 
 class TuningManager:
     """Manages the tuning process for a Bitaxe miner, adjusting settings and stratum pools."""
@@ -395,69 +395,6 @@ def parse_arguments() -> argparse.Namespace:
         help="Serve metrics via HTTP on port 8093 (default: False)",
     )
     return parser.parse_args()
-
-
-def load_config(
-    config_loader: IConfigLoader, asic_yaml: str, user_config_path: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Load and merge configurations from ASIC model YAML and optional user config.
-
-    Args:
-        config_loader (IConfigLoader): Loader for YAML files.
-        asic_yaml (str): Path to ASIC model YAML file.
-        user_config_path (Optional[str]): Path to optional user config YAML.
-
-    Returns:
-        Dict[str, Any]: Merged configuration dictionary.
-    """
-    if not os.path.exists(asic_yaml):
-        logging.error(f"ASIC model YAML file {asic_yaml} not found")
-        sys.exit(1)
-    config = config_loader.load_config(asic_yaml)
-    if user_config_path and os.path.exists(user_config_path):
-        user_config = config_loader.load_config(user_config_path)
-        config.update(user_config)
-    return config
-
-
-def validate_config(config: Dict[str, Any]) -> None:
-    """
-    Validate that required configuration keys are present.
-
-    Args:
-        config (Dict[str, Any]): Configuration dictionary to validate.
-
-    Raises:
-        SystemExit: If required keys are missing.
-    """
-    required_keys = [
-        "INITIAL_VOLTAGE",
-        "INITIAL_FREQUENCY",
-        "SAMPLE_INTERVAL",
-        "LOG_FILE",
-        "SNAPSHOT_FILE",
-        "POOLS_FILE",
-        "PID_FREQ_KP",
-        "PID_FREQ_KI",
-        "PID_FREQ_KD",
-        "PID_VOLT_KP",
-        "PID_VOLT_KI",
-        "PID_VOLT_KD",
-        "MIN_VOLTAGE",
-        "MAX_VOLTAGE",
-        "MIN_FREQUENCY",
-        "MAX_FREQUENCY",
-        "VOLTAGE_STEP",
-        "FREQUENCY_STEP",
-        "HASHRATE_SETPOINT",
-        "TARGET_TEMP",
-        "POWER_LIMIT",
-    ]
-    missing_keys = [key for key in required_keys if key not in config]
-    if missing_keys:
-        logging.error(f"Missing required config keys: {', '.join(missing_keys)}")
-        sys.exit(1)
 
 
 def main() -> None:
