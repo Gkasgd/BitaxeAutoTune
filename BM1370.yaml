@@ -1,0 +1,26 @@
+# BM1370.yaml
+INITIAL_FREQUENCY: 550       # Match API frequency (550 MHz)
+MIN_FREQUENCY: 400           # Lowest available frequency
+MAX_FREQUENCY: 625           # Highest available frequency
+INITIAL_VOLTAGE: 1150        # Match API coreVoltage (1150 mV)
+MIN_VOLTAGE: 1000            # Lowest available voltage
+MAX_VOLTAGE: 1250            # Highest available voltage
+FREQUENCY_STEP: 25
+VOLTAGE_STEP: 10
+TARGET_TEMP: 45.0
+SAMPLE_INTERVAL: 60
+POWER_LIMIT: 15.0
+HASHRATE_SETPOINT: 500
+PID_FREQ_KP: 0.2
+PID_FREQ_KI: 0.01
+PID_FREQ_KD: 0.02
+PID_VOLT_KP: 0.1
+PID_VOLT_KI: 0.01
+PID_VOLT_KD: 0.02
+LOG_FILE: "bitaxepid_tuning_log_BM1370.csv"
+SNAPSHOT_FILE: "bitaxepid_snapshot_BM1370.json"
+POOLS_FILE: "pools.yaml"
+METRICS_SERVE: FALSE
+USER_FILE: "user.yaml"
+# PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
+# BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"

@@ -1,0 +1,26 @@
+# BM1366.yaml
+INITIAL_FREQUENCY: 485       # "485 (default)" from BM1366DropdownFrequency
+MIN_FREQUENCY: 400           # lowest available frequency in BM1366DropdownFrequency
+MAX_FREQUENCY: 575           # highest available frequency in BM1366DropdownFrequency
+INITIAL_VOLTAGE: 1200        # "1200 (default)" from BM1366CoreVoltage
+MIN_VOLTAGE: 1100            # lowest available voltage in BM1366CoreVoltage
+MAX_VOLTAGE: 1300            # highest available voltage in BM1366CoreVoltage
+FREQUENCY_STEP: 25
+VOLTAGE_STEP: 10
+TARGET_TEMP: 55.0
+SAMPLE_INTERVAL: 60
+POWER_LIMIT: 15.0
+HASHRATE_SETPOINT: 525
+PID_FREQ_KP: 0.2
+PID_FREQ_KI: 0.01
+PID_FREQ_KD: 0.02
+PID_VOLT_KP: 0.1
+PID_VOLT_KI: 0.01
+PID_VOLT_KD: 0.02
+LOG_FILE: "bitaxepid_tuning_log_BM1366.csv"
+SNAPSHOT_FILE: "bitaxepid_snapshot_BM1366.json"
+POOLS_FILE: "pools.yaml"
+METRICS_SERVE: false # yaml boolean lowercase true/false
+USER_FILE: "user.yaml"
+# PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
+# BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
