@@ -7,6 +7,8 @@ information from YAML configuration files, performing latency tests, and identif
 Latency measurements are cached in pools.yaml and refreshed every 15 minutes by default.
 """
 
+import logging
+import sys
 import time
 import socket
 import yaml
@@ -17,6 +19,8 @@ import os
 
 
 # --- Pool Management Functions ---
+logger = logging.getLogger(__name__)
+
 STRATUM_SCHEME = "stratum+tcp"
 
 
@@ -80,7 +84,7 @@ def load_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
             data = yaml.safe_load(file)
             return data if isinstance(data, list) else []
     except Exception as e:
-        print(f"Error loading pools from {yaml_file}: {e}")
+        logger.error(f"Error loading pools from {yaml_file}: {e}")
         return []
 
 
@@ -96,7 +100,9 @@ def load_user_yaml(user_yaml: str = "user.yaml") -> Dict[str, str]:
         with open(user_yaml, "r") as file:
             return yaml.safe_load(file) or {}
     except FileNotFoundError:
-        print(f"User YAML file {user_yaml} not found. Using empty user configurations.")
+        logger.warning(
+            f"User YAML file {user_yaml} not found. Using empty user configurations."
+        )
         return {}
 
 
@@ -119,7 +125,7 @@ def measure_latency(
         Median latency in milliseconds, or infinity if unreachable.
     """
     latencies = []
-    print(f"Testing latency for {endpoint}:{port}")
+    logger.info(f"Testing latency for {endpoint}:{port}")
 
     for i in range(attempts):
         start_time = time.time()
@@ -132,14 +138,14 @@ def measure_latency(
             sock.close()
             latency = (time.time() - start_time) * 1000  # Convert to milliseconds
             latencies.append(latency)
-            print(f"Attempt {i+1}/{attempts}: {latency:.0f}ms")
+            logger.debug(f"Attempt {i+1}/{attempts}: {latency:.0f}ms")
         except (socket.timeout, socket.error) as e:
-            print(f"Attempt {i+1}/{attempts}: Failed ({str(e)})")
+            logger.debug(f"Attempt {i+1}/{attempts}: Failed ({str(e)})")
             latencies.append(float("inf"))
         time.sleep(delay)
 
     median_latency = statistics.median(latencies) if latencies else float("inf")
-    print(f"Median latency: {median_latency:.0f}ms")
+    logger.info(f"Median latency: {median_latency:.0f}ms")
     return median_latency
 
 
@@ -157,13 +163,13 @@ def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
         with open(yaml_file, "r") as f:
             pools = yaml.safe_load(f)
             if not isinstance(pools, list):
-                print(f"Error: Invalid pools data format in {yaml_file}")
+                logger.error(f"Invalid pools data format in {yaml_file}")
                 return []
     except Exception as e:
-        print(f"Error reading {yaml_file}: {e}")
+        logger.error(f"Error reading {yaml_file}: {e}")
         return []
 
-    print(f"\nMeasuring latency for {len(pools)} pools...")
+    logger.info(f"Measuring latency for {len(pools)} pools...")
     updated_pools = []
 
     for pool in pools:
@@ -184,10 +190,12 @@ def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
             )
             updated_pools.append(updated_pool)
 
-            print(f"Updated pool data for {endpoint_str}: latency={latency:.0f}ms")
+            logger.debug(
+                f"Updated pool data for {endpoint_str}: latency={latency:.0f}ms"
+            )
 
         except ValueError as e:
-            print(f"Error parsing endpoint {endpoint_str}: {e}")
+            logger.error(f"Error parsing endpoint {endpoint_str}: {e}")
             updated_pool = pool.copy()
             updated_pool.update(
                 {
@@ -207,18 +215,20 @@ def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
 
         # If successful, rename to the actual file
         os.replace(temp_file, yaml_file)
-        print(f"\nSuccessfully updated {yaml_file} with new latency data")
+        logger.info(f"Successfully updated {yaml_file} with new latency data")
 
         # Verify the file was written correctly
         with open(yaml_file, "r") as f:
             verify_pools = yaml.safe_load(f)
             if not verify_pools or len(verify_pools) != len(pools):
-                print(f"Warning: File verification failed for {yaml_file}")
+                logger.warning(f"File verification failed for {yaml_file}")
             else:
-                print(f"File verification successful: {len(verify_pools)} pools saved")
+                logger.debug(
+                    f"File verification successful: {len(verify_pools)} pools saved"
+                )
 
     except Exception as e:
-        print(f"Error saving pool data to {yaml_file}: {e}")
+        logger.error(f"Error saving pool data to {yaml_file}: {e}")
         if os.path.exists(temp_file):
             try:
                 os.remove(temp_file)
@@ -269,7 +279,7 @@ def get_fastest_pools(
                 # Check if latency measurement has expired
                 minutes_since_test = (current_time - last_tested_timestamp) / 60
                 if minutes_since_test > latency_expiry_minutes:
-                    print(
+                    logger.info(
                         f"Latency data expired for {pool['endpoint']} "
                         f"(last tested: {pool['last_tested']}, "
                         f"{minutes_since_test:.1f} minutes ago)"
@@ -277,15 +287,15 @@ def get_fastest_pools(
                     need_measure = True
                     break
             except (ValueError, KeyError) as e:
-                print(f"Error checking latency expiry: {e}")
+                logger.warning(f"Error checking latency expiry: {e}")
                 need_measure = True
                 break
 
     if need_measure:
-        print("Measuring pool latencies...")
+        logger.info("Measuring pool latencies...")
         pools = measure_pools(yaml_file)
     else:
-        print("Using cached pool latencies")
+        logger.info("Using cached pool latencies")
 
     valid_pools = [
         pool for pool in pools if pool.get("latency", float("inf")) != float("inf")
@@ -293,11 +303,11 @@ def get_fastest_pools(
     sorted_pools = sorted(valid_pools, key=lambda x: x.get("latency", float("inf")))[:2]
 
     if not sorted_pools:
-        print("No valid pools found.")
+        logger.error("No valid pools found.")
         return []
 
     if len(sorted_pools) < 2:
-        print("Warning: Only one valid pool found. Duplicating for backup.")
+        logger.warning("Only one valid pool found. Duplicating for backup.")
         sorted_pools.append(sorted_pools[0].copy())
 
     # Load default users from user.yaml if not provided
@@ -322,9 +332,9 @@ def get_fastest_pools(
     )
 
     # Log selected pools
-    print(f"\nSelected pools:")
+    logger.info("Selected pools:")
     for i, pool in enumerate(sorted_pools):
-        print(
+        logger.info(
             f"{'Primary' if i == 0 else 'Backup'} pool: "
             f"{pool['endpoint']} (latency: {pool['latency']:.0f}ms, "
             f"last tested: {pool['last_tested']})"
@@ -341,7 +351,18 @@ def main() -> None:
     arrancar el auto-tuner completo. Igual que measure_pools(), reescribe
     pools.yaml con las latencias medidas.
     """
+    # Solo al ejecutarse como programa se configura el logging: como libreria,
+    # el modulo se limita a emitir por su logger y deja la configuracion al
+    # llamante (bitaxepid.py), que es lo que se espera de un modulo importable.
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        stream=sys.stderr,
+    )
+
     pools_with_latency = measure_pools()
+    # El resultado va a stdout, no al log: es la salida util del comando, para
+    # poder redirigirla o pasarla por una tuberia.
     print("\nCurrent pool latencies:")
     print(yaml.safe_dump(pools_with_latency, default_flow_style=False))
 
