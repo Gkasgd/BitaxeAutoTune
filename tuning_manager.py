@@ -55,6 +55,7 @@ class TuningManager:
         user_file: Optional[str] = None,
         primary_stratum: Optional[Dict[str, Any]] = None,
         backup_stratum: Optional[Dict[str, Any]] = None,
+        manage_pools: bool = False,
     ) -> None:
         """
         Initialize the TuningManager with tuning parameters and miner settings.
@@ -73,6 +74,9 @@ class TuningManager:
             user_file (Optional[str]): Path to user YAML file, if provided.
             primary_stratum (Optional[Dict[str, Any]]): Primary stratum settings.
             backup_stratum (Optional[Dict[str, Any]]): Backup stratum settings.
+            manage_pools (bool): Si es True, BitaxePID puede reconfigurar los
+                pools stratum del miner y reiniciarlo. Por defecto False: se
+                respeta la configuracion de pools que ya tenga el miner.
         """
         self.tuning_strategy = tuning_strategy
         self.api_client = api_client
@@ -88,6 +92,7 @@ class TuningManager:
         self.user_file = user_file
         self.primary_stratum = primary_stratum
         self.backup_stratum = backup_stratum
+        self.manage_pools = manage_pools
         # Se rellenan en connect_and_configure, cuando ya se ha hablado con el
         # miner. Se inicializan aqui para que el objeto no tenga atributos a
         # medias si alguien consulta antes de conectar.
@@ -116,6 +121,15 @@ class TuningManager:
             logging.error("Failed to get system info from miner API")
             sys.exit(1)
         self.mac_address = system_info.get("macAddr", "unknown")  # Store MAC address
+
+        if not self.manage_pools:
+            logging.info(
+                "Gestion de pools desactivada: se respeta la configuracion "
+                "stratum del miner. Usa --manage-pools o MANAGE_MINER_POOLS "
+                "para permitir que BitaxePID la cambie."
+            )
+            self._initialize_hardware()
+            return
 
         current_stratum_user = system_info.get("stratumUser", "")
         current_fallback_user = system_info.get("fallbackStratumUser", "")

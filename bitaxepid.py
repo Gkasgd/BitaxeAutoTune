@@ -8,8 +8,11 @@ Configuration is loaded from YAML files, with command-line overrides for flexibi
 console logging and a rich terminal UI for real-time monitoring, and optionally exposes metrics via an HTTP server
 on port 8093 for Prometheus and Grafana dashboards when enabled via --serve-metrics or METRICS_SERVE config.
 
+Por defecto NO toca la configuracion de pools stratum del miner: hay que
+autorizarlo con --manage-pools o con MANAGE_MINER_POOLS en la configuracion.
+
 Usage:
-    python bitaxepid.py --ip <miner_ip> [--pools-file pools2.yaml] [--logging-level debug] [--serve-metrics]
+    python bitaxepid.py --ip <miner_ip> [--pools-file pools2.yaml] [--logging-level debug] [--serve-metrics] [--manage-pools]
 
 Dependencies:
     - Terceros: rich, pyyaml, simple_pid, pyfiglet, urllib3
@@ -74,6 +77,8 @@ def main() -> None:
 
     serve_metrics = args.serve_metrics or config.get("METRICS_SERVE", False)
     config["METRICS_SERVE"] = serve_metrics
+    manage_pools = args.manage_pools or config.get("MANAGE_MINER_POOLS", False)
+    config["MANAGE_MINER_POOLS"] = manage_pools
 
     logger_instance = Logger(config["LOG_FILE"], config["SNAPSHOT_FILE"])
     tuning_strategy = PIDTuningStrategy(
@@ -121,6 +126,7 @@ def main() -> None:
         user_file=args.user_file if args.user_file else config.get("USER_FILE", None),
         primary_stratum=primary_stratum,
         backup_stratum=backup_stratum,
+        manage_pools=manage_pools,
     )
     tuning_manager.connect_and_configure()
 

@@ -21,6 +21,9 @@ LOG_FILE: "bitaxepid_tuning_log_BM1368.csv"
 SNAPSHOT_FILE: "bitaxepid_snapshot_BM1368.json"
 POOLS_FILE: "pools.yaml"
 METRICS_SERVE: FALSE
+# Si es FALSE (por defecto), BitaxePID no toca la configuracion de pools
+# stratum del miner ni lo reinicia al arrancar. Equivale a --manage-pools.
+MANAGE_MINER_POOLS: FALSE
 USER_FILE: "user.yaml"
 # PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
 # BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"

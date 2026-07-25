@@ -94,4 +94,13 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Serve metrics via HTTP on port 8093 (default: False)",
     )
+    parser.add_argument(
+        "--manage-pools",
+        action="store_true",
+        help=(
+            "Permitir que BitaxePID reconfigure los pools stratum del miner y "
+            "lo reinicie al arrancar (default: False, no se toca la "
+            "configuracion de pools existente)"
+        ),
+    )
     return parser.parse_args()
