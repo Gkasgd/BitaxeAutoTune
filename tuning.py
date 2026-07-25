@@ -155,7 +155,11 @@ class PIDTuningStrategy:
                 hashrate < 0.85 * self.pid_freq.setpoint
                 and current_voltage < self.max_voltage
             ):
-                new_voltage = min(proposed_voltage, current_voltage + self.voltage_step)
+                new_voltage = min(
+                    proposed_voltage,
+                    current_voltage + self.voltage_step,
+                    self.max_voltage,
+                )
                 console.print(
                     f"[{SECONDARY_ACCENT}]Increasing voltage to {new_voltage}mV due to hashrate {hashrate} < {0.85 * self.pid_freq.setpoint}[/]"
                 )
@@ -169,7 +173,9 @@ class PIDTuningStrategy:
                 current_frequency >= self.max_frequency
                 and current_voltage < self.max_voltage
             ):
-                new_voltage = current_voltage + self.voltage_step
+                new_voltage = min(
+                    current_voltage + self.voltage_step, self.max_voltage
+                )
                 console.print(
                     f"[{SECONDARY_ACCENT}]Increasing voltage to {new_voltage}mV as frequency at max[/]"
                 )
@@ -179,4 +185,25 @@ class PIDTuningStrategy:
             )
 
         self.last_hashrate = hashrate
-        return new_voltage, new_frequency
+
+        # Red final: por muy razonada que sea cada rama, lo que sale de aqui va
+        # directo al hardware. Se recorta al rango configurado una ultima vez,
+        # asi que MAX_VOLTAGE y MAX_FREQUENCY son un tope real y no una
+        # intencion. Tambien cubre el caso de entrar ya fuera de rango: si el
+        # snapshot de una ejecucion anterior guardo 1200mV y despues se baja
+        # MAX_VOLTAGE a 1150, la primera propuesta ya viene recortada en lugar
+        # de arrastrar el valor viejo.
+        clamped_voltage = max(self.min_voltage, min(self.max_voltage, new_voltage))
+        clamped_frequency = max(
+            self.min_frequency, min(self.max_frequency, new_frequency)
+        )
+        if clamped_voltage != new_voltage or clamped_frequency != new_frequency:
+            console.print(
+                f"[{WARNING_COLOR}]Clamping to safe limits: "
+                f"{new_voltage}mV/{new_frequency}MHz -> "
+                f"{clamped_voltage}mV/{clamped_frequency}MHz "
+                f"(limits {self.min_voltage}-{self.max_voltage}mV, "
+                f"{self.min_frequency}-{self.max_frequency}MHz)[/]"
+            )
+
+        return clamped_voltage, clamped_frequency
