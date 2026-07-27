@@ -287,21 +287,52 @@ class EstabilidadTuningStrategy:
         puede_subir = temp <= self.target_temp - self.temp_margin
 
         # --- Prioridad 1: temperatura -------------------------------------
+        # El VOLTAJE es la palanca termica, no la frecuencia. Se baja voltaje
+        # mientras los errores lo permitan; cuando el voltaje ya no puede bajar
+        # sin pasarse del objetivo de errores, entonces baja la frecuencia; y si
+        # tampoco queda frecuencia, se baja voltaje por debajo del umbral de
+        # errores, porque la temperatura es absoluta y manda sobre todo.
         if temp > self.target_temp:
-            if current_frequency > self.min_frequency:
-                nueva_f = current_frequency - self.frequency_step
-                console.print(
-                    f"[{WARNING_COLOR}]Bajando frecuencia a {nueva_f}MHz por "
-                    f"temperatura {temp}C > {self.target_temp}C[/]"
-                )
-            elif current_voltage > self.min_voltage:
-                # Bajar voltaje SUBIRA los errores de hardware. Se hace igual:
-                # la temperatura es lo primero y ya no queda frecuencia.
+            med = self._mediana()
+            # Se baja voltaje mientras lo medido no se pase del objetivo. Cuando
+            # no hay mediana SI se concede el beneficio de la duda, y es
+            # deliberado: cada cambio invalida la ventana, asi que "sin mediana"
+            # es el caso habitual justo despues de actuar, y exigir una medida
+            # dejaria la palanca termica en la frecuencia casi siempre, que es
+            # justo lo contrario de lo pedido. El riesgo de bajar voltaje de mas
+            # esta acotado porque en cuanto la ventana se llena por encima del
+            # objetivo esta rama deja de elegir voltaje y pasa a la frecuencia.
+            voltaje_con_sitio = current_voltage > self.min_voltage and (
+                med is None or med <= self.error_target
+            )
+            if voltaje_con_sitio:
                 nueva_v = current_voltage - self.voltage_step
                 console.print(
                     f"[{WARNING_COLOR}]Bajando voltaje a {nueva_v}mV por "
-                    f"temperatura {temp}C > {self.target_temp}C (ya en la "
-                    f"frecuencia minima; esto empeorara los errores)[/]"
+                    f"temperatura {temp}C > {self.target_temp}C "
+                    f"(errores {'sin medir' if med is None else f'{med:.2f}%'} "
+                    f"contra objetivo {self.error_target}%)[/]"
+                )
+            elif current_frequency > self.min_frequency:
+                # El voltaje ya esta en su suelo util: bajarlo mas se saldria del
+                # objetivo de errores. Toca frecuencia.
+                nueva_f = current_frequency - self.frequency_step
+                console.print(
+                    f"[{WARNING_COLOR}]Bajando frecuencia a {nueva_f}MHz por "
+                    f"temperatura {temp}C > {self.target_temp}C (el voltaje ya "
+                    f"no puede bajar sin pasarse del "
+                    f"{self.error_target}% de errores)[/]"
+                )
+            elif current_voltage > self.min_voltage:
+                # Ultimo recurso: ya no queda frecuencia, asi que se sacrifica el
+                # objetivo de errores. La temperatura es la unica restriccion que
+                # no se negocia.
+                nueva_v = current_voltage - self.voltage_step
+                console.print(
+                    f"[{WARNING_COLOR}]Bajando voltaje a {nueva_v}mV por "
+                    f"temperatura {temp}C > {self.target_temp}C: ya en la "
+                    f"frecuencia minima, se acepta pasarse del "
+                    f"{self.error_target}% de errores[/]"
                 )
             else:
                 console.print(
@@ -390,10 +421,23 @@ class EstabilidadTuningStrategy:
         alto alcanzable, que es tambien el mas estable y desde el que tiene
         sentido empezar a bajar voltaje.
         """
-        if v >= self.max_voltage and f >= self.max_frequency:
+        # Primero el voltaje al maximo, de golpe. Es el punto de partida del
+        # procedimiento: con el voltaje mas alto el chip aguanta la frecuencia mas
+        # alta, asi que subir frecuencia con voltaje a medias solo obligaria a
+        # rehacer el camino. No se sube "de paso en paso" porque no se esta
+        # midiendo nada: la unica condicion de parada aqui es la temperatura.
+        if v < self.max_voltage:
+            console.print(
+                f"[{SECONDARY_ACCENT}]RAMPA: voltaje al maximo "
+                f"{self.max_voltage}mV antes de subir frecuencia (temp {temp}C)[/]"
+            )
+            return self.max_voltage, f
+
+        if f >= self.max_frequency:
             self._cambiar_estado(
                 BUSCAR_VOLTAJE,
-                f"techo alcanzado ({v}mV/{f}MHz), ahora a buscar el voltaje minimo",
+                f"techo de frecuencia alcanzado ({v}mV/{f}MHz), ahora a buscar "
+                f"el voltaje minimo",
             )
             return v, f
 
@@ -405,13 +449,14 @@ class EstabilidadTuningStrategy:
             )
             return v, f
 
-        nueva_v = min(v + self.voltage_step, self.max_voltage)
+        # Y ahora solo frecuencia. El voltaje ya esta arriba y no se toca en este
+        # estado: bajarlo es trabajo de las fases siguientes.
         nueva_f = min(f + self.frequency_step, self.max_frequency)
         console.print(
-            f"[{SECONDARY_ACCENT}]RAMPA: subiendo a {nueva_v}mV/{nueva_f}MHz "
-            f"(temp {temp}C, techo {self.max_voltage}mV/{self.max_frequency}MHz)[/]"
+            f"[{SECONDARY_ACCENT}]RAMPA: subiendo frecuencia a {nueva_f}MHz "
+            f"(temp {temp}C, {v}mV, techo {self.max_frequency}MHz)[/]"
         )
-        return nueva_v, nueva_f
+        return v, nueva_f
 
     def _buscar_voltaje(self, v: float, f: float) -> Tuple[float, float]:
         """
@@ -545,18 +590,32 @@ class EstabilidadTuningStrategy:
                     f"margen, subiendo frecuencia a {objetivo_f}MHz[/]"
                 )
                 return v, objetivo_f
-            # Bajar voltaje SOLO en el tope real de frecuencia, nunca por un
-            # techo aprendido. Si se hiciera tambien ahi, bajar voltaje subiria
-            # los errores, eso obligaria a subirlo de nuevo, y al subirlo se
-            # olvida el techo y se reintenta la frecuencia: un ciclo en las dos
-            # palancas a la vez. Con esta condicion, el voltaje solo se afina
-            # cuando ya no queda frecuencia que ganar.
+            # Sobra margen de errores y la frecuencia esta en su tope duro: se baja
+            # voltaje, que es la mitad "con el menor voltaje" del procedimiento.
+            #
+            # La condicion es a proposito estrecha (solo en max_frequency) y no se
+            # debe ensanchar sin resolver antes el ciclo entre las dos palancas:
+            # baja voltaje -> suben los errores -> sube voltaje -> vuelve a sobrar
+            # margen -> baja voltaje, cruzando el objetivo en cada vuelta. Medido:
+            # ensanchandola el incumplimiento pasa del 6-9 % al 36-43 %, y con un
+            # suelo de voltaje aprendido por frecuencia solo baja al 26-32 %.
+            #
+            # La causa de fondo es de escalones, no de logica: un paso de voltaje
+            # mueve los errores mucho mas que la histeresis que autoriza el cambio
+            # (10 mV = 1.6 puntos contra 0.5 de banda), asi que desde un punto que
+            # cumple, bajar voltaje se pasa siempre. Para que esta busqueda sea
+            # util hace falta VOLTAGE_STEP fino o una banda mayor.
             if f >= self.max_frequency and v > self.min_voltage:
                 nueva_v = v - self.voltage_step
+                if f >= self.max_frequency:
+                    motivo = f"la frecuencia ya en el maximo {self.max_frequency}MHz"
+                elif not puede_subir:
+                    motivo = f"a {temp}C no hay margen para subir frecuencia"
+                else:
+                    motivo = f"{f + self.frequency_step}MHz ya fallo antes"
                 console.print(
                     f"[{SECONDARY_ACCENT}]OPTIMIZAR: errores {med:.2f}% con "
-                    f"margen y la frecuencia ya en el maximo "
-                    f"{self.max_frequency}MHz, bajando voltaje a {nueva_v}mV[/]"
+                    f"margen y {motivo}, bajando voltaje a {nueva_v}mV[/]"
                 )
                 return nueva_v, f
 

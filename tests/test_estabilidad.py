@@ -126,10 +126,35 @@ check(r1 == r2, f"hashrate 0 y 999999 dan la misma decision {r1}")
 
 # ---------------------------------------------------------------------------
 print("\n=== 2. la temperatura tiene prioridad sobre todo ===")
+# La palanca termica es el VOLTAJE, no la frecuencia. Se baja voltaje mientras
+# los errores lo permitan; la frecuencia solo cuando el voltaje ya no puede
+# bajar sin pasarse del objetivo de errores.
 s = nueva()
-# Errores altisimos (querria subir voltaje) pero temperatura pasada.
 v, f = s.apply_strategy(1200, 800, 70.0, 1500, 27.0, error_percent=40.0)
-check(f == 775 and v == 1200, f"temp 70>65 baja frecuencia a 775, no toca voltaje: {v}mV/{f}MHz")
+check(
+    v == 1190 and f == 800,
+    f"temp 70>65 baja VOLTAJE a 1190, no toca frecuencia: {v}mV/{f}MHz",
+)
+
+# Con la ventana llena por encima del objetivo, el voltaje ya no tiene sitio:
+# bajarlo empeoraria los errores, asi que la que cede es la frecuencia.
+#
+# La ventana se rellena a mano porque por el lazo no hay forma: con errores del
+# 40 % cada muestra provoca un cambio de ajuste, y todo cambio la invalida. Lo
+# que se comprueba aqui es la decision CON ventana llena, no como se llena.
+s2 = nueva()
+s2.estado = OPTIMIZAR
+s2._descartar = 0
+s2._ventana.extend([40.0] * 7)
+check(
+    s2._mediana() is not None,
+    f"la ventana queda llena para la comprobacion (mediana {s2._mediana()})",
+)
+v, f = s2.apply_strategy(1200, 800, 70.0, 1500, 27.0, error_percent=40.0)
+check(
+    f == 775 and v == 1200,
+    f"con errores ya sobre el objetivo, la temperatura baja FRECUENCIA: {v}mV/{f}MHz",
+)
 
 s = nueva()
 # En la frecuencia minima ya, con temperatura pasada: toca bajar voltaje.
