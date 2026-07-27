@@ -228,6 +228,23 @@ class EstabilidadTuningStrategy:
         self._ventana.clear()
         self._descartar = self.error_settle
 
+    def ajuste_cambiado_fuera(self) -> None:
+        """
+        Avisar de que alguien cambio voltaje o frecuencia sin pasar por aqui.
+
+        Lo llama TuningManager cuando detecta que el miner tiene otro ajuste (el
+        usuario lo toco por la web de AxeOS). Se tira lo medido, porque describe un
+        ajuste que ya no esta puesto, y se olvida lo aprendido sobre techos y
+        suelos, porque se aprendio en otro punto de trabajo.
+
+        NO se vuelve a RAMPA: se sigue optimizando desde donde el usuario lo dejo.
+        La temperatura sigue mandando por la via normal, que es la rama de mayor
+        prioridad y no consulta la ventana.
+        """
+        self._invalidar_ventana()
+        self._f_techo = None
+        self._estables = 0
+
     def _cambiar_estado(self, nuevo: str, motivo: str) -> None:
         if nuevo == self.estado:
             return

@@ -250,6 +250,42 @@ class TuningManager:
         time.sleep(1)
         self.api_client.restart()
 
+    def _adoptar_ajuste_externo(self, system_info: Dict[str, Any]) -> None:
+        """
+        Si el miner tiene otro voltaje o frecuencia de los que creemos, adoptarlo.
+
+        El usuario puede cambiar voltaje y frecuencia desde la web de AxeOS sin
+        pasar por el tuner. Hasta ahora el bucle decidia siempre sobre sus propias
+        variables y no volvia a mirar el miner, asi que el errorPercentage medido
+        correspondia al ajuste DEL USUARIO mientras la decision se aplicaba sobre
+        el ajuste DEL PROGRAMA: los dos lados de la ecuacion dejaban de
+        corresponder.
+
+        Se adopta el valor del usuario y se sigue optimizando desde ahi, en vez de
+        reimponer el propio. La temperatura sigue mandando: es la rama de mayor
+        prioridad de la estrategia y no consulta la ventana de errores, asi que un
+        ajuste externo que caliente demasiado se corrige en la muestra siguiente
+        sin necesidad de nada especial aqui.
+
+        Se invalida la ventana porque lo medido antes describe otro ajuste.
+        """
+        real_v = system_info.get("coreVoltage")
+        real_f = system_info.get("frequency")
+        if real_v is None or real_f is None:
+            return
+        # Margen de 1 unidad: el miner redondea y no conviene disparar esto por
+        # un decimal de diferencia.
+        if abs(real_v - self.target_voltage) < 1 and abs(real_f - self.target_frequency) < 1:
+            return
+        logging.info(
+            f"Ajuste cambiado fuera del tuner: el miner esta en {real_v}mV/"
+            f"{real_f}MHz y no en {self.target_voltage}mV/{self.target_frequency}MHz. "
+            f"Se adopta y se sigue optimizando desde ahi."
+        )
+        self.target_voltage = real_v
+        self.target_frequency = real_f
+        self.tuning_strategy.ajuste_cambiado_fuera()
+
     def _initialize_hardware(self) -> None:
         """Initialize miner hardware settings."""
         logging.info(
@@ -327,6 +363,7 @@ class TuningManager:
                 kwargs = {}
                 if isinstance(self.tuning_strategy, EstabilidadTuningStrategy):
                     kwargs["error_percent"] = system_info.get("errorPercentage")
+                    self._adoptar_ajuste_externo(system_info)
 
                 new_voltage, new_frequency = self.tuning_strategy.apply_strategy(
                     current_voltage=self.target_voltage,
