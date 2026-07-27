@@ -89,9 +89,19 @@ POWER_LIMIT: 30.0
 # ves en tus logs, o cada fluctuacion normal saca al tuner de "System stable".
 HASHRATE_SETPOINT: 1550
 
-# Segundos entre muestras. El hardware tarda en estabilizarse tras un cambio;
-# muestrear mas a menudo hace que el PID reaccione a ruido.
-SAMPLE_INTERVAL: 60
+# Segundos entre muestras. 30 porque g comprobo en su miner que la temperatura
+# y la tasa de errores reflejan un cambio de voltaje/frecuencia en unos 30 s: no
+# hace falta esperar mas para que la lectura corresponda al ajuste nuevo.
+#
+# Es la mitad del tiempo por decision: con ERROR_SETTLE 1 y ERROR_WINDOW 7 son
+# 8 muestras, o sea 4 minutos en vez de los 10 que salian con 60 s y 3 descartes.
+# Medido sobre el chip simulado con ambiente oscilante: el incumplimiento del
+# objetivo baja del 5% al 2-4% y la frecuencia media sube.
+#
+# OJO si se usa la estrategia PID (ERROR_TUNING en FALSE): alli 30 s hace que el
+# controlador reaccione a ruido de hashrate. Este valor esta elegido para
+# ERROR_TUNING.
+SAMPLE_INTERVAL: 30
 
 # =============================================================================
 # 4. GANANCIAS DE LOS DOS CONTROLADORES PID
@@ -156,7 +166,21 @@ ERROR_WINDOW: 7
 # Muestras que se descartan tras cada cambio de ajuste. errorPercentage es un
 # promedio interno de AxeOS y arrastra historia del ajuste anterior; sin este
 # margen se decidiria con datos del pasado.
-ERROR_SETTLE: 3
+#
+# 1 (y no 3) porque g comprobo que el efecto de un cambio se ve en ~30 s: con
+# SAMPLE_INTERVAL 30, una muestra descartada ya cubre el asentamiento.
+#
+# NO CONFUNDIR asentamiento con ruido. Que la senal llegue a su valor en 30 s no
+# quita que ese valor oscile 2.8 puntos entre lecturas, asi que el asentamiento
+# rapido justifica bajar ESTE valor, pero NO ERROR_WINDOW: la mediana sigue
+# haciendo falta.
+#
+# Riesgo a vigilar en el CSV: `errorPercentage` es una ventana interna del
+# firmware de longitud desconocida. Si fuera mas larga que 30 s, las muestras
+# consecutivas saldrian correlacionadas y la mediana filtraria peor de lo que
+# supone el calculo. Se veria como siete lecturas casi identicas seguidas de un
+# salto brusco.
+ERROR_SETTLE: 1
 
 # Margen bajo TARGET_TEMP, en grados, que se exige para autorizar cualquier
 # SUBIDA. Con TARGET_TEMP 65 y este margen en 2.0, solo se sube por debajo de
