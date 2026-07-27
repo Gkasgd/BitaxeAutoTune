@@ -160,7 +160,18 @@ class EstabilidadTuningStrategy:
 
         self.estado = RAMPA
         self._ventana: Deque[float] = deque(maxlen=max(1, int(error_window)))
-        self._descartar = 0
+        # Se arranca descartando, igual que despues de cada cambio de ajuste. El
+        # tuner se lanza sobre un miner que ya estaba minando, asi que la primera
+        # temperatura y el primer errorPercentage describen el ajuste ANTERIOR, no
+        # el que se acaba de escribir. Medido en el miner real: a los 2 s de
+        # arrancar, RAMPA leyo 60.25 C (calor arrastrado de ~900 MHz), se creyo en
+        # el limite termico y se quedo clavado en 495 MHz, donde una hora despues
+        # seguia a 38.5 C con 22 grados de margen sin usar.
+        self._descartar = max(1, int(error_settle))
+        # Muestras a ignorar para decidir por TEMPERATURA al arrancar. Es un
+        # contador aparte de _descartar porque la temperatura no pasa por la
+        # ventana: se compara cruda contra target_temp en cada muestra.
+        self._calentando = self._descartar
         # Frecuencia que ya se demostro insostenible al voltaje actual. Sin esta
         # memoria el lazo reintenta subir a ella cada vez que el ruido mete la
         # mediana un instante dentro de la banda, y la frecuencia vaga entre dos
@@ -247,6 +258,8 @@ class EstabilidadTuningStrategy:
         un resultado, no un objetivo.
         """
         self._registrar_error(error_percent)
+        if self._calentando > 0:
+            self._calentando -= 1
 
         nueva_v = current_voltage
         nueva_f = current_frequency
@@ -280,9 +293,20 @@ class EstabilidadTuningStrategy:
                     f"{self.min_frequency}MHz: no queda margen para bajar[/]"
                 )
             if self.estado == RAMPA:
-                self._cambiar_estado(
-                    BUSCAR_VOLTAJE, f"temperatura alcanzada ({temp}C)"
-                )
+                # Al arrancar NO se abandona la rampa por temperatura: la lectura
+                # puede ser calor arrastrado del ajuste anterior. Se baja igual
+                # (la proteccion termica no se toca nunca), pero se sigue en RAMPA
+                # para volver a subir cuando la lectura sea del ajuste actual.
+                if self._calentando > 0:
+                    console.print(
+                        f"[{WARNING_COLOR}]RAMPA: {temp}C al arrancar puede ser "
+                        f"calor del ajuste anterior; se baja pero no se abandona "
+                        f"la rampa ({self._calentando} muestras por confirmar)[/]"
+                    )
+                else:
+                    self._cambiar_estado(
+                        BUSCAR_VOLTAJE, f"temperatura alcanzada ({temp}C)"
+                    )
             return self._cerrar(nueva_v, nueva_f, current_voltage, current_frequency)
 
         # --- Prioridad 2: potencia ----------------------------------------
