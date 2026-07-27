@@ -31,6 +31,7 @@ from logger import Logger
 from metrics_server import start_metrics_server
 from stratum import parse_stratum_url
 from tuning import PIDTuningStrategy
+from tuning_estabilidad import EstabilidadTuningStrategy
 from tuning_manager import TuningManager
 from ui_null import NullTerminalUI
 from ui_rich import RichTerminalUI
@@ -81,24 +82,61 @@ def main() -> None:
     config["MANAGE_MINER_POOLS"] = manage_pools
 
     logger_instance = Logger(config["LOG_FILE"], config["SNAPSHOT_FILE"])
-    tuning_strategy = PIDTuningStrategy(
-        kp_freq=config["PID_FREQ_KP"],
-        ki_freq=config["PID_FREQ_KI"],
-        kd_freq=config["PID_FREQ_KD"],
-        kp_volt=config["PID_VOLT_KP"],
-        ki_volt=config["PID_VOLT_KI"],
-        kd_volt=config["PID_VOLT_KD"],
-        min_voltage=config["MIN_VOLTAGE"],
-        max_voltage=config["MAX_VOLTAGE"],
-        min_frequency=config["MIN_FREQUENCY"],
-        max_frequency=config["MAX_FREQUENCY"],
-        voltage_step=config["VOLTAGE_STEP"],
-        frequency_step=config["FREQUENCY_STEP"],
-        setpoint=config["HASHRATE_SETPOINT"],
-        sample_interval=config["SAMPLE_INTERVAL"],
-        target_temp=config["TARGET_TEMP"],
-        power_limit=config["POWER_LIMIT"],
-    )
+
+    # Dos estrategias posibles. La de estabilidad se activa con
+    # ERROR_TUNING: TRUE y necesita ERROR_TARGET_PERCENT; entonces el hashrate
+    # deja de ser un objetivo y las decisiones las toman la temperatura y el
+    # porcentaje de errores de hardware del miner. Por defecto sigue la
+    # estrategia PID de siempre, para no cambiar el comportamiento de nadie que
+    # no lo pida explicitamente.
+    if config.get("ERROR_TUNING", False):
+        if "ERROR_TARGET_PERCENT" not in config:
+            logging.error(
+                "ERROR_TUNING esta activado pero falta ERROR_TARGET_PERCENT: "
+                "sin objetivo de errores la estrategia no puede decidir"
+            )
+            api_client.close()
+            sys.exit(1)
+        tuning_strategy = EstabilidadTuningStrategy(
+            min_voltage=config["MIN_VOLTAGE"],
+            max_voltage=config["MAX_VOLTAGE"],
+            min_frequency=config["MIN_FREQUENCY"],
+            max_frequency=config["MAX_FREQUENCY"],
+            voltage_step=config["VOLTAGE_STEP"],
+            frequency_step=config["FREQUENCY_STEP"],
+            target_temp=config["TARGET_TEMP"],
+            power_limit=config["POWER_LIMIT"],
+            error_target=config["ERROR_TARGET_PERCENT"],
+            error_hysteresis=config.get("ERROR_HYSTERESIS", 0.5),
+            error_window=config.get("ERROR_WINDOW", 7),
+            error_settle=config.get("ERROR_SETTLE", 3),
+            temp_margin=config.get("TEMP_MARGIN", 2.0),
+            retry_ceiling=config.get("ERROR_RETRY_CEILING", 50),
+        )
+        logging.info(
+            f"Estrategia de estabilidad: objetivo {config['ERROR_TARGET_PERCENT']}% "
+            f"de errores de hardware, temperatura objetivo {config['TARGET_TEMP']}C. "
+            f"El hashrate no interviene en las decisiones."
+        )
+    else:
+        tuning_strategy = PIDTuningStrategy(
+            kp_freq=config["PID_FREQ_KP"],
+            ki_freq=config["PID_FREQ_KI"],
+            kd_freq=config["PID_FREQ_KD"],
+            kp_volt=config["PID_VOLT_KP"],
+            ki_volt=config["PID_VOLT_KI"],
+            kd_volt=config["PID_VOLT_KD"],
+            min_voltage=config["MIN_VOLTAGE"],
+            max_voltage=config["MAX_VOLTAGE"],
+            min_frequency=config["MIN_FREQUENCY"],
+            max_frequency=config["MAX_FREQUENCY"],
+            voltage_step=config["VOLTAGE_STEP"],
+            frequency_step=config["FREQUENCY_STEP"],
+            setpoint=config["HASHRATE_SETPOINT"],
+            sample_interval=config["SAMPLE_INTERVAL"],
+            target_temp=config["TARGET_TEMP"],
+            power_limit=config["POWER_LIMIT"],
+        )
     terminal_ui = NullTerminalUI() if args.log_to_console else RichTerminalUI()
 
     primary_stratum = (

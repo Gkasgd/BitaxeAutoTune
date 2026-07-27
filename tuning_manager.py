@@ -31,6 +31,7 @@ from logger import Logger
 from metrics_server import update_metrics
 from stratum import get_fastest_pools, parse_stratum_url
 from tuning import PIDTuningStrategy
+from tuning_estabilidad import EstabilidadTuningStrategy
 from ui_null import NullTerminalUI
 from ui_rich import RichTerminalUI
 
@@ -40,7 +41,7 @@ class TuningManager:
 
     def __init__(
         self,
-        tuning_strategy: PIDTuningStrategy,
+        tuning_strategy: Union[PIDTuningStrategy, EstabilidadTuningStrategy],
         api_client: BitaxeAPIClient,
         logger: Logger,
         config_loader: YamlConfigLoader,
@@ -312,9 +313,20 @@ class TuningManager:
                     "frequency": system_info.get("frequency", 0),
                     "fanrpm": system_info.get("fanrpm", 0),
                 }
+                if isinstance(self.tuning_strategy, EstabilidadTuningStrategy):
+                    metrics["error_percent"] = system_info.get("errorPercentage")
+                    metrics["error_target"] = self.tuning_strategy.error_target
+                    metrics["estado"] = self.tuning_strategy.estado
                 self.logger.log_to_csv(**metrics)
                 if self.config.get("METRICS_SERVE", False):
                     update_metrics(self.mac_address, metrics)
+
+                # errorPercentage solo lo consume la estrategia de estabilidad.
+                # Se pasa como argumento opcional para que PIDTuningStrategy,
+                # que no lo acepta, siga funcionando igual que antes.
+                kwargs = {}
+                if isinstance(self.tuning_strategy, EstabilidadTuningStrategy):
+                    kwargs["error_percent"] = system_info.get("errorPercentage")
 
                 new_voltage, new_frequency = self.tuning_strategy.apply_strategy(
                     current_voltage=self.target_voltage,
@@ -322,6 +334,7 @@ class TuningManager:
                     temp=system_info.get("temp", 0),
                     hashrate=system_info.get("hashRate", 0),
                     power=system_info.get("power", 0),
+                    **kwargs,
                 )
 
                 if (
