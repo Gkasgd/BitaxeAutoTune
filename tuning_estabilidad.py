@@ -591,7 +591,17 @@ class EstabilidadTuningStrategy:
                 )
                 return v, objetivo_f
             # Sobra margen de errores y la frecuencia esta en su tope duro: se baja
-            # voltaje, que es la mitad "con el menor voltaje" del procedimiento.
+            # voltaje. Ojo: la busqueda del voltaje minimo NO se hace aqui, se hace
+            # en BUSCAR_VOLTAJE, que es el estado dedicado a eso. Esto es solo el
+            # afinado del regimen permanente.
+            #
+            # Verificado por fuerza bruta contra el optimo teorico, con los limites
+            # reales (1180-1210mV / 475-925MHz, TARGET_TEMP 60) sobre un chip
+            # calibrado con dos medidas del miner: con objetivos 1, 2, 5 y 10 % el
+            # lazo acaba EXACTAMENTE en el optimo, y el voltaje final nunca queda
+            # por encima del optimo. Que el voltaje acabe alto no es un fallo: mas
+            # voltaje sostiene mas frecuencia al mismo nivel de errores, y el
+            # procedimiento pide primero la frecuencia mas alta.
             #
             # La condicion es a proposito estrecha (solo en max_frequency) y no se
             # debe ensanchar sin resolver antes el ciclo entre las dos palancas:
@@ -603,8 +613,13 @@ class EstabilidadTuningStrategy:
             # La causa de fondo es de escalones, no de logica: un paso de voltaje
             # mueve los errores mucho mas que la histeresis que autoriza el cambio
             # (10 mV = 1.6 puntos contra 0.5 de banda), asi que desde un punto que
-            # cumple, bajar voltaje se pasa siempre. Para que esta busqueda sea
-            # util hace falta VOLTAGE_STEP fino o una banda mayor.
+            # cumple, bajar voltaje se pasa siempre.
+            #
+            # Tambien se probo y descarto estimar ese coste midiendolo (comparando
+            # la mediana antes y despues de cada cambio de voltaje) para exigir un
+            # margen mayor que el coste: daba resultados identicos en ocho
+            # escenarios, porque en la practica esta rama casi no se ejerce. Era
+            # codigo muerto.
             if f >= self.max_frequency and v > self.min_voltage:
                 nueva_v = v - self.voltage_step
                 if f >= self.max_frequency:
