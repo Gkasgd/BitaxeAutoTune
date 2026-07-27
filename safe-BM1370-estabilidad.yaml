@@ -183,8 +183,15 @@ METRICS_SERVE: TRUE
 
 # Historial de tuning y ultimo estado aplicado. En data/ para que un volumen
 # de docker los conserve al recrear el contenedor.
-LOG_FILE: "data/bitaxepid_tuning_log_BM1370_safe.csv"
-SNAPSHOT_FILE: "data/bitaxepid_snapshot_BM1370_safe.json"
+#
+# NOMBRES DISTINTOS a los de safe-BM1370.yaml a proposito. Esta estrategia
+# escribe tres columnas mas (error_percent, error_target, estado), y la cabecera
+# del CSV solo se escribe cuando el fichero NO existe. Compartiendo fichero con
+# el perfil PID, las filas nuevas saldrian con 33 campos bajo una cabecera de
+# 30: comprobado, quedan desalineadas. Aparte, tener los dos historiales
+# separados es lo que permite comparar una estrategia con la otra.
+LOG_FILE: "data/bitaxepid_tuning_log_BM1370_estabilidad.csv"
+SNAPSHOT_FILE: "data/bitaxepid_snapshot_BM1370_estabilidad.json"
 
 # Lista de pools candidatos y credenciales. Son claves OBLIGATORIAS aunque
 # MANAGE_MINER_POOLS este en FALSE (validate_config las exige), asi que los
