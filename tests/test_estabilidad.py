@@ -130,18 +130,19 @@ check(r1 == r2 == r3, f"hashrate 0, 999999 y ausente dan la misma decision {r1}"
 
 # ---------------------------------------------------------------------------
 print("\n=== 2. la temperatura tiene prioridad sobre todo ===")
-# La palanca termica es el VOLTAJE, no la frecuencia. Se baja voltaje mientras
-# los errores lo permitan; la frecuencia solo cuando el voltaje ya no puede
-# bajar sin pasarse del objetivo de errores.
+# La palanca termica es la FRECUENCIA. Es la primera que baja al pasarse de
+# temperatura, y el voltaje solo se toca cuando ya no queda frecuencia. Bajar
+# voltaje sube los errores, asi que usarlo como respuesta al calor empeoraba la
+# estabilidad justo cuando el chip esta mas forzado.
 s = nueva()
 v, f = s.apply_strategy(1200, 800, 70.0, 27.0, error_percent=40.0)
 check(
-    v == 1190 and f == 800,
-    f"temp 70>65 baja VOLTAJE a 1190, no toca frecuencia: {v}mV/{f}MHz",
+    f == 775 and v == 1200,
+    f"temp 70>65 baja FRECUENCIA a 775, no toca voltaje: {v}mV/{f}MHz",
 )
 
-# Con la ventana llena por encima del objetivo, el voltaje ya no tiene sitio:
-# bajarlo empeoraria los errores, asi que la que cede es la frecuencia.
+# Y da igual lo que digan los errores: la temperatura no consulta la ventana.
+# Con la ventana llena por encima del objetivo la decision es la misma.
 #
 # La ventana se rellena a mano porque por el lazo no hay forma: con errores del
 # 40 % cada muestra provoca un cambio de ajuste, y todo cambio la invalida. Lo
@@ -157,11 +158,12 @@ check(
 v, f = s2.apply_strategy(1200, 800, 70.0, 27.0, error_percent=40.0)
 check(
     f == 775 and v == 1200,
-    f"con errores ya sobre el objetivo, la temperatura baja FRECUENCIA: {v}mV/{f}MHz",
+    f"con la ventana llena la decision no cambia, sigue la frecuencia: {v}mV/{f}MHz",
 )
 
 s = nueva()
-# En la frecuencia minima ya, con temperatura pasada: toca bajar voltaje.
+# En la frecuencia minima ya, con temperatura pasada: ahora si toca el voltaje,
+# aunque eso empeore los errores. La temperatura es lo unico que no se negocia.
 v, f = s.apply_strategy(1200, 750, 70.0, 27.0, error_percent=40.0)
 check(v == 1190 and f == 750, f"en MIN_FREQUENCY baja voltaje: {v}mV/{f}MHz")
 
@@ -321,6 +323,71 @@ check(e2 <= 2.01, f"cumple el objetivo viniendo desde arriba: {e2:.2f}%")
 check(chip2.temp(f2, v2) <= 65.0, "y respeta la temperatura")
 
 # ---------------------------------------------------------------------------
+print("\n=== 11. estable de sobra: busca el voltaje minimo ===")
+# Lo pedido: cuando la frecuencia ya no puede subir y todo lleva un rato estable
+# (temperatura con margen y errores por debajo del objetivo), se baja voltaje.
+# Antes esto solo ocurria si la frecuencia estaba en MAX_FREQUENCY, asi que en un
+# nodo cuyo tope lo pone la temperatura (el caso normal) no ocurria nunca.
+#
+# Chip generoso a proposito: errores muy bajos, y la frecuencia topa por
+# temperatura y no por su limite. Es el escenario donde sobra voltaje.
+err_gen = lambda f, v: max(0.0, 0.3 - (v - 1250) * 0.02)  # noqa: E731
+tmp_gen = lambda f, v: 64.0 + (f - 800) * 0.05            # noqa: E731
+
+s_min = nueva(retry_ceiling=3)
+s_min.estado = OPTIMIZAR
+v, f = 1250, 800
+visitados = []
+for _ in range(90):
+    v, f = s_min.apply_strategy(
+        v, f, tmp_gen(f, v), 20.0, error_percent=err_gen(f, v)
+    )
+    visitados.append((v, f, err_gen(f, v)))
+
+check(v < 1250, f"bajo el voltaje sin estar en MAX_FREQUENCY: {v}mV/{f}MHz")
+check(f == 800, f"y no toco la frecuencia, que ya estaba en su tope: {f}MHz")
+peor = max(e for _, _, e in visitados)
+check(
+    peor <= 2.0,
+    f"la busqueda no se paso del objetivo en ninguna muestra (peor {peor:.2f}%)",
+)
+# Se para en el borde de la banda, no sigue hasta el minimo absoluto: ahi es
+# donde deja de haber margen que gastar.
+check(
+    v > 1150,
+    f"se para donde se acaba el margen y no en el minimo absoluto: {v}mV",
+)
+print(f"  1250mV -> {v}mV a {f}MHz, peor error visto {peor:.2f}%")
+
+print("\n=== 12. el voltaje que no aguanta se recuerda ===")
+# Simetrico al techo de frecuencia: si hay que subir voltaje por errores, ese
+# voltaje queda anotado como suelo y la busqueda no vuelve a bajar ahi. Sin esto
+# el lazo cicla (baja, se pasa, sube, sobra margen, baja) cruzando el objetivo en
+# cada vuelta, que es lo que medimos en 36-43% de incumplimiento.
+s_suelo = nueva()
+s_suelo.estado = OPTIMIZAR
+s_suelo._descartar = 0
+s_suelo._ventana.extend([5.0] * 7)  # errores por encima del objetivo
+v, f = s_suelo.apply_strategy(1200, 800, 60.0, 27.0, error_percent=5.0)
+check(v == 1210, f"sube voltaje por errores: {v}mV")
+check(
+    s_suelo._v_suelo == 1200,
+    f"anota 1200mV como suelo que no aguanta (suelo {s_suelo._v_suelo})",
+)
+
+# Y con el suelo puesto, no se baja hasta el aunque sobre margen y haya estables
+# de sobra.
+s_suelo._descartar = 0
+s_suelo._ventana.clear()
+s_suelo._ventana.extend([0.1] * 7)
+s_suelo._estables = 99
+s_suelo._f_techo = 825  # la frecuencia no puede subir: fuerza la rama del voltaje
+v2, f2 = s_suelo.apply_strategy(1210, 800, 60.0, 27.0, error_percent=0.1)
+check(
+    v2 == 1210,
+    f"con el suelo en 1200 no baja de 1210 aunque sobre margen: {v2}mV",
+)
+
 print("\n" + "=" * 70)
 if fallos:
     print(f"FALLAN {len(fallos)} comprobaciones:")

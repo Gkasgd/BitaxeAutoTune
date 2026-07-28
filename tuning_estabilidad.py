@@ -32,10 +32,20 @@ Y tres estados, que recorren el procedimiento en ese orden:
                   objetivo. Al pasarse, se vuelve un paso atras. El resultado
                   es el voltaje MINIMO que cumple el objetivo a esa frecuencia.
   OPTIMIZAR       Regimen permanente. Si los errores se pasan, subir voltaje.
-                  Si sobra margen, subir frecuencia. Si sobra margen y la
-                  frecuencia ya esta al tope, bajar voltaje. Es el "y asi
+                  Si sobra margen, subir frecuencia. Y cuando la frecuencia ya
+                  no puede subir mas y todo lleva un rato estable (temperatura
+                  con margen, errores por debajo del objetivo), bajar voltaje
+                  paso a paso para buscar el minimo. Es el "y asi
                   sucesivamente": el lazo converge a la frecuencia mas alta
                   sostenible y al voltaje mas bajo que la sostiene.
+
+                  La bajada de voltaje es deliberadamente lenta: exige una tanda
+                  de decisiones estables por cada paso y recuerda el voltaje que
+                  no aguanto, para no volver a bajar ahi. Un paso de voltaje
+                  mueve los errores mucho mas (10 mV = 1.6 puntos medidos) que la
+                  banda de histeresis que autoriza el cambio (0.5), asi que
+                  intentarlo en cuanto sobra margen se pasa del objetivo casi
+                  siempre; medido, el incumplimiento pasaba del 6-9 % al 36-43 %.
 
 Por que una mediana y no la lectura de cada muestra: `errorPercentage` es
 ruidoso. Cinco lecturas consecutivas del BM1370 con voltaje y frecuencia
@@ -52,7 +62,7 @@ Uso:
 
     strategy = EstabilidadTuningStrategy(...)
     new_voltage, new_frequency = strategy.apply_strategy(
-        current_voltage, current_frequency, temp, hashrate, power,
+        current_voltage, current_frequency, temp, power,
         error_percent=system_info["errorPercentage"],
     )
 
@@ -196,6 +206,13 @@ class EstabilidadTuningStrategy:
         # estables, que es el "y asi sucesivamente" del procedimiento.
         self._estables = 0
         self.reintentar_techo = max(1, int(retry_ceiling))
+        # Suelo de voltaje aprendido, simetrico a _f_techo: el voltaje mas bajo
+        # que se probo y NO aguanto los errores. Hace que la busqueda del minimo
+        # sea monotona (no se vuelve a bajar por debajo de lo que ya fallo) en
+        # vez de ciclar cruzando el objetivo. Caduca por el mismo motivo que el
+        # techo de frecuencia: lo que no aguanta con calor puede aguantar de
+        # noche.
+        self._v_suelo: Optional[float] = None
         # Para avisar una sola vez si el miner no reporta el campo.
         self._sin_dato = 0
         self._aviso_sin_dato = False
@@ -254,6 +271,7 @@ class EstabilidadTuningStrategy:
         """
         self._invalidar_ventana()
         self._f_techo = None
+        self._v_suelo = None
         self._estables = 0
 
     def _cambiar_estado(self, nuevo: str, motivo: str) -> None:
@@ -298,53 +316,45 @@ class EstabilidadTuningStrategy:
         puede_subir = temp <= self.target_temp - self.temp_margin
 
         # --- Prioridad 1: temperatura -------------------------------------
-        # El VOLTAJE es la palanca termica, no la frecuencia. Se baja voltaje
-        # mientras los errores lo permitan; cuando el voltaje ya no puede bajar
-        # sin pasarse del objetivo de errores, entonces baja la frecuencia; y si
-        # tampoco queda frecuencia, se baja voltaje por debajo del umbral de
-        # errores, porque la temperatura es absoluta y manda sobre todo.
+        # La palanca termica es la FRECUENCIA. Es la primera que baja cuando se
+        # pasa de temperatura, y solo cuando ya no queda frecuencia se toca el
+        # voltaje.
+        #
+        # Antes era al contrario (el voltaje primero) y estaba mal por dos
+        # motivos. Uno: bajar voltaje sube los errores, asi que la respuesta al
+        # calor empeoraba la estabilidad justo cuando el chip estaba mas
+        # forzado. Dos: el voltaje es lo que sostiene la frecuencia, asi que
+        # quitarlo dejaba el ajuste en un punto que ya no se podia mantener y la
+        # correccion de errores volvia a subirlo, peleandose con la termica.
+        #
+        # Bajar frecuencia baja temperatura y errores a la vez, y es reversible:
+        # la frecuencia se recupera sola en cuanto la temperatura da margen. El
+        # voltaje se reserva para lo que le corresponde, que es el punto estable.
         if temp > self.target_temp:
             med = self._mediana()
-            # Se baja voltaje mientras lo medido no se pase del objetivo. Cuando
-            # no hay mediana SI se concede el beneficio de la duda, y es
-            # deliberado: cada cambio invalida la ventana, asi que "sin mediana"
-            # es el caso habitual justo despues de actuar, y exigir una medida
-            # dejaria la palanca termica en la frecuencia casi siempre, que es
-            # justo lo contrario de lo pedido. El riesgo de bajar voltaje de mas
-            # esta acotado porque en cuanto la ventana se llena por encima del
-            # objetivo esta rama deja de elegir voltaje y pasa a la frecuencia.
-            voltaje_con_sitio = current_voltage > self.min_voltage and (
-                med is None or med <= self.error_target
-            )
-            if voltaje_con_sitio:
-                nueva_v = current_voltage - self.voltage_step
+            if current_frequency > self.min_frequency:
+                nueva_f = current_frequency - self.frequency_step
                 console.print(
-                    f"[{WARNING_COLOR}]Bajando voltaje a {nueva_v}mV por "
+                    f"[{WARNING_COLOR}]Bajando frecuencia a {nueva_f}MHz por "
                     f"temperatura {temp}C > {self.target_temp}C "
                     f"(errores {'sin medir' if med is None else f'{med:.2f}%'} "
                     f"contra objetivo {self.error_target}%)[/]"
                 )
-            elif current_frequency > self.min_frequency:
-                # El voltaje ya esta en su suelo util: bajarlo mas se saldria del
-                # objetivo de errores. Toca frecuencia.
-                nueva_f = current_frequency - self.frequency_step
-                console.print(
-                    f"[{WARNING_COLOR}]Bajando frecuencia a {nueva_f}MHz por "
-                    f"temperatura {temp}C > {self.target_temp}C (el voltaje ya "
-                    f"no puede bajar sin pasarse del "
-                    f"{self.error_target}% de errores)[/]"
-                )
+                # La frecuencia baja por calor, no porque fallara: el techo
+                # aprendido no cambia, pero se deja de contar como estable.
+                self._estables = 0
             elif current_voltage > self.min_voltage:
-                # Ultimo recurso: ya no queda frecuencia, asi que se sacrifica el
-                # objetivo de errores. La temperatura es la unica restriccion que
-                # no se negocia.
+                # Ya en la frecuencia minima y sigue haciendo calor. Se baja
+                # voltaje aunque eso empeore los errores: la temperatura es la
+                # unica restriccion que no se negocia.
                 nueva_v = current_voltage - self.voltage_step
                 console.print(
                     f"[{WARNING_COLOR}]Bajando voltaje a {nueva_v}mV por "
                     f"temperatura {temp}C > {self.target_temp}C: ya en la "
-                    f"frecuencia minima, se acepta pasarse del "
-                    f"{self.error_target}% de errores[/]"
+                    f"frecuencia minima {self.min_frequency}MHz, se acepta "
+                    f"pasarse del {self.error_target}% de errores[/]"
                 )
+                self._estables = 0
             else:
                 console.print(
                     f"[{WARNING_COLOR}]Temperatura {temp}C > {self.target_temp}C "
@@ -565,6 +575,11 @@ class EstabilidadTuningStrategy:
                 # Con mas voltaje, la frecuencia que antes fallaba puede ser
                 # viable: el techo aprendido deja de ser valido.
                 self._f_techo = None
+                # Y al contrario: que haya que subir desde aqui es la prueba de
+                # que este voltaje no aguanta. Se anota como suelo para que la
+                # busqueda del minimo no vuelva a bajar hasta el.
+                self._v_suelo = v
+                self._estables = 0
                 return nueva_v, f
             if f > self.min_frequency:
                 nueva_f = f - self.frequency_step
@@ -645,6 +660,45 @@ class EstabilidadTuningStrategy:
                     f"{self.max_frequency}MHz, bajando voltaje a {nueva_v}mV[/]"
                 )
                 return nueva_v, f
+            # Y si no se pudo subir frecuencia por las otras dos razones (no hay
+            # margen termico, o el techo aprendido dice que ese paso ya fallo),
+            # el ajuste ya esta donde va a quedarse: entonces si toca buscar el
+            # voltaje minimo, que es lo pedido. "Todo estable" significa aqui las
+            # tres cosas a la vez: temperatura con margen (esta rama solo se
+            # alcanza si la prioridad 1 no salto), errores por debajo del
+            # objetivo menos la histeresis (la condicion de este bloque), y la
+            # frecuencia asentada.
+            #
+            # Se hace despacio y con memoria, porque hacerlo a la primera es lo
+            # que medimos mal: un paso de voltaje mueve los errores 1.6 puntos y
+            # la banda que autoriza el cambio es de 0.5, asi que desde un punto
+            # que cumple, bajar se pasa casi siempre; probado de golpe, el
+            # incumplimiento subia del 6-9 % al 36-43 %.
+            #
+            # Las dos condiciones que lo hacen converger:
+            #   - esperar `reintentar_techo` decisiones estables seguidas (el
+            #     contador _estables), asi cada intento se paga con una tanda de
+            #     medidas buenas y no se persigue el ruido;
+            #   - recordar en _v_suelo el voltaje que no aguanto, para no volver
+            #     a bajar ahi. La busqueda es monotona y termina, en vez de
+            #     ciclar cruzando el objetivo en cada vuelta.
+            if (
+                v > self.min_voltage
+                and self._estables >= self.reintentar_techo
+                # Estricto: el suelo es un voltaje que YA se probo y no aguanto,
+                # asi que hay que quedarse por encima. Con >= se volveria a bajar
+                # exactamente a el, se pasaria de errores otra vez, y el lazo
+                # oscilaria entre esos dos escalones para siempre.
+                and (self._v_suelo is None or v - self.voltage_step > self._v_suelo)
+            ):
+                nueva_v = v - self.voltage_step
+                console.print(
+                    f"[{SECONDARY_ACCENT}]OPTIMIZAR: estable {self._estables} "
+                    f"decisiones a {temp}C con errores {med:.2f}%, bajando "
+                    f"voltaje a {nueva_v}mV para buscar el minimo[/]"
+                )
+                self._estables = 0
+                return nueva_v, f
 
         # Punto estable. Se cuenta, y cada reintentar_techo decisiones se olvida
         # el techo aprendido para volver a probar si ya se puede subir.
@@ -655,6 +709,19 @@ class EstabilidadTuningStrategy:
                 f"reintentando la frecuencia {self._f_techo}MHz, que fallo antes[/]"
             )
             self._f_techo = None
+            self._estables = 0
+        elif self._v_suelo is not None and self._estables >= 2 * self.reintentar_techo:
+            # El suelo de voltaje caduca mas tarde que el techo de frecuencia, y
+            # a proposito: recuperar frecuencia da hashrate y es lo que interesa
+            # reintentar pronto, mientras que rebajar el voltaje solo ahorra unos
+            # milivatios. Si el suelo caducara igual de rapido, cada tanda
+            # estable acabaria en un intento de bajada que se pasa, y el lazo
+            # pasaria la vida cruzando el objetivo por unos pocos mV.
+            console.print(
+                f"[{PRIMARY_ACCENT}]Estable {self._estables} decisiones: "
+                f"reintentando el voltaje {self._v_suelo}mV, que fallo antes[/]"
+            )
+            self._v_suelo = None
             self._estables = 0
         console.print(
             f"[{PRIMARY_ACCENT}]Estable en {v}mV/{f}MHz: errores {med:.2f}% "
