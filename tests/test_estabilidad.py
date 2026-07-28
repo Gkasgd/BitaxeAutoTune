@@ -76,8 +76,7 @@ def simular(
         nv, nf = strategy.apply_strategy(
             current_voltage=v,
             current_frequency=f,
-            temp=t,
-            hashrate=0.0,  # deliberadamente cero: no debe influir en nada
+            temp=t,  # deliberadamente cero: no debe influir en nada
             power=p,
             error_percent=e,
         )
@@ -118,11 +117,16 @@ def check(cond: bool, msg: str) -> None:
 
 # ---------------------------------------------------------------------------
 print("=== 1. el hashrate no influye en ninguna decision ===")
-# Misma situacion, hashrate absurdamente distinto: debe decidir lo mismo.
-s1, s2 = nueva(), nueva()
-r1 = s1.apply_strategy(1200, 800, 60.0, 0.0, 27.0, error_percent=12.0)
-r2 = s2.apply_strategy(1200, 800, 60.0, 999999.0, 27.0, error_percent=12.0)
-check(r1 == r2, f"hashrate 0 y 999999 dan la misma decision {r1}")
+# Ya no es un parametro con el que se decida: se acepta por compatibilidad y se
+# descarta. Se comprueba que pasarlo por nombre, con valores opuestos, no cambia
+# nada, y que omitirlo del todo da la misma decision.
+s1, s2, s3 = nueva(), nueva(), nueva()
+r1 = s1.apply_strategy(1200, 800, 60.0, 27.0, error_percent=12.0, hashrate=0.0)
+r2 = s2.apply_strategy(
+    1200, 800, 60.0, 27.0, error_percent=12.0, hashrate=999999.0
+)
+r3 = s3.apply_strategy(1200, 800, 60.0, 27.0, error_percent=12.0)
+check(r1 == r2 == r3, f"hashrate 0, 999999 y ausente dan la misma decision {r1}")
 
 # ---------------------------------------------------------------------------
 print("\n=== 2. la temperatura tiene prioridad sobre todo ===")
@@ -130,7 +134,7 @@ print("\n=== 2. la temperatura tiene prioridad sobre todo ===")
 # los errores lo permitan; la frecuencia solo cuando el voltaje ya no puede
 # bajar sin pasarse del objetivo de errores.
 s = nueva()
-v, f = s.apply_strategy(1200, 800, 70.0, 1500, 27.0, error_percent=40.0)
+v, f = s.apply_strategy(1200, 800, 70.0, 27.0, error_percent=40.0)
 check(
     v == 1190 and f == 800,
     f"temp 70>65 baja VOLTAJE a 1190, no toca frecuencia: {v}mV/{f}MHz",
@@ -150,7 +154,7 @@ check(
     s2._mediana() is not None,
     f"la ventana queda llena para la comprobacion (mediana {s2._mediana()})",
 )
-v, f = s2.apply_strategy(1200, 800, 70.0, 1500, 27.0, error_percent=40.0)
+v, f = s2.apply_strategy(1200, 800, 70.0, 27.0, error_percent=40.0)
 check(
     f == 775 and v == 1200,
     f"con errores ya sobre el objetivo, la temperatura baja FRECUENCIA: {v}mV/{f}MHz",
@@ -158,18 +162,18 @@ check(
 
 s = nueva()
 # En la frecuencia minima ya, con temperatura pasada: toca bajar voltaje.
-v, f = s.apply_strategy(1200, 750, 70.0, 1500, 27.0, error_percent=40.0)
+v, f = s.apply_strategy(1200, 750, 70.0, 27.0, error_percent=40.0)
 check(v == 1190 and f == 750, f"en MIN_FREQUENCY baja voltaje: {v}mV/{f}MHz")
 
 s = nueva()
 # En el minimo absoluto: no puede bajar mas, no debe romperse.
-v, f = s.apply_strategy(1150, 750, 70.0, 1500, 27.0, error_percent=40.0)
+v, f = s.apply_strategy(1150, 750, 70.0, 27.0, error_percent=40.0)
 check(v == 1150 and f == 750, f"en el minimo absoluto no se mueve: {v}mV/{f}MHz")
 
 # ---------------------------------------------------------------------------
 print("\n=== 3. la potencia baja FRECUENCIA, no voltaje ===")
 s = nueva()
-v, f = s.apply_strategy(1200, 800, 60.0, 1500, 35.0, error_percent=1.0)
+v, f = s.apply_strategy(1200, 800, 60.0, 35.0, error_percent=1.0)
 check(
     f == 775 and v == 1200,
     f"potencia 35W > 30.1W baja frecuencia y respeta el voltaje: {v}mV/{f}MHz",
@@ -185,7 +189,7 @@ s.estado = BUSCAR_VOLTAJE
 s._invalidar_ventana()
 movimientos = 0
 for i in range(9):  # 3 descartes + 6 de ventana: aun no llega a 7
-    nv, nf = s.apply_strategy(v, f, 60.0, 0, 27.0, error_percent=1.0)
+    nv, nf = s.apply_strategy(v, f, 60.0, 27.0, error_percent=1.0)
     if (nv, nf) != (v, f):
         movimientos += 1
     v, f = nv, nf
@@ -295,11 +299,11 @@ print("\n=== 9. sin el dato de errores solo actuan temp y potencia ===")
 s_n = nueva()
 v, f = 1200, 800
 for _ in range(30):
-    v, f = s_n.apply_strategy(v, f, 60.0, 1500, 27.0, error_percent=None)
+    v, f = s_n.apply_strategy(v, f, 60.0, 27.0, error_percent=None)
 check((v, f) != (1200, 800), f"la RAMPA funciona sin el dato: {v}mV/{f}MHz")
 antes = (v, f)
 for _ in range(30):
-    v, f = s_n.apply_strategy(v, f, 60.0, 1500, 27.0, error_percent=None)
+    v, f = s_n.apply_strategy(v, f, 60.0, 27.0, error_percent=None)
 check(
     s_n.estado in (BUSCAR_VOLTAJE, OPTIMIZAR),
     f"sale de RAMPA por temperatura aunque no haya dato (estado {s_n.estado})",

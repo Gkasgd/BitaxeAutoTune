@@ -72,10 +72,13 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--fallback-stratum-user", type=str, help="Stratum user for backup pool"
     )
-    parser.add_argument("--voltage", type=float, help="Initial voltage override (mV)")
-    parser.add_argument(
-        "--frequency", type=float, help="Initial frequency override (MHz)"
-    )
+    # Enteros, no float: son mV y MHz que se escriben en el hardware y AxeOS no
+    # aplica fracciones. Aceptar "--frequency 493.75" solo conseguia meter un
+    # decimal que la estrategia arrastra sumandole pasos enteros el resto de la
+    # ejecucion (493.75, 498.75, 503.75...). Con type=int argparse lo rechaza en
+    # el momento, que es donde el usuario puede corregirlo.
+    parser.add_argument("--voltage", type=int, help="Initial voltage override (mV)")
+    parser.add_argument("--frequency", type=int, help="Initial frequency override (MHz)")
     parser.add_argument(
         "--sample-interval", type=float, help="Sample interval override (seconds)"
     )

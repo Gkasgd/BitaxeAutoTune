@@ -20,10 +20,14 @@ Orden de prioridad, de mayor a menor:
 
 Y tres estados, que recorren el procedimiento en ese orden:
 
-  RAMPA           Subir frecuencia y voltaje a la vez, un paso por muestra,
-                  hasta el tope de ambos o hasta acercarse a TARGET_TEMP. Se
-                  llega asi al punto mas alto que la temperatura permite, que
-                  es tambien el mas estable.
+  RAMPA           Poner el voltaje en MAX_VOLTAGE de una vez y despues subir
+                  la frecuencia un paso por muestra, hasta su tope o hasta
+                  acercarse a TARGET_TEMP. Se llega asi al punto mas alto que
+                  la temperatura permite, que es tambien el mas estable. El
+                  voltaje va de golpe y no escalonado porque en este estado no
+                  se mide nada: la unica condicion de parada es la temperatura,
+                  que es inmediata, y con el voltaje alto desde el principio la
+                  frecuencia no tiene que rehacer camino.
   BUSCAR_VOLTAJE  Bajar el voltaje paso a paso hasta que los errores tocan el
                   objetivo. Al pasarse, se vuelve un paso atras. El resultado
                   es el voltaje MINIMO que cumple el objetivo a esa frecuencia.
@@ -156,7 +160,14 @@ class EstabilidadTuningStrategy:
         self.error_target = error_target
         self.error_hysteresis = error_hysteresis
         self.temp_margin = temp_margin
-        self.error_settle = error_settle
+        # Se sanea AQUI y no solo al calcular el primer descarte: este atributo
+        # es el que usa _invalidar_ventana tras cada cambio de ajuste. Guardando
+        # el valor crudo, un ERROR_SETTLE de 0 descartaba una muestra al arrancar
+        # (donde si se aplicaba el max) y ninguna despues, o sea que cada cambio
+        # se juzgaba con lecturas del ajuste anterior. Al menos un descarte hace
+        # falta siempre, porque errorPercentage es un promedio interno de AxeOS y
+        # arrastra historia.
+        self.error_settle = max(1, int(error_settle))
 
         self.estado = RAMPA
         self._ventana: Deque[float] = deque(maxlen=max(1, int(error_window)))
@@ -167,7 +178,7 @@ class EstabilidadTuningStrategy:
         # arrancar, RAMPA leyo 60.25 C (calor arrastrado de ~900 MHz), se creyo en
         # el limite termico y se quedo clavado en 495 MHz, donde una hora despues
         # seguia a 38.5 C con 22 grados de margen sin usar.
-        self._descartar = max(1, int(error_settle))
+        self._descartar = self.error_settle
         # Muestras a ignorar para decidir por TEMPERATURA al arrancar. Es un
         # contador aparte de _descartar porque la temperatura no pasa por la
         # ventana: se compara cruda contra target_temp en cada muestra.
@@ -263,16 +274,16 @@ class EstabilidadTuningStrategy:
         current_voltage: float,
         current_frequency: float,
         temp: float,
-        hashrate: float,
-        power: float,
+        power: float = 0.0,
         error_percent: Optional[float] = None,
+        hashrate: Optional[float] = None,
     ) -> Tuple[float, float]:
         """
         Devolver el siguiente par (voltaje, frecuencia) a aplicar.
 
-        `hashrate` se acepta para mantener la misma firma que la estrategia PID,
-        pero NO se usa en ninguna decision: en este controlador el hashrate es
-        un resultado, no un objetivo.
+        `hashrate` se acepta y se DESCARTA. Esta en la firma solo para que una
+        llamada antigua que lo pase por nombre no falle: en este controlador el
+        hashrate es un resultado, no un objetivo.
         """
         self._registrar_error(error_percent)
         if self._calentando > 0:
@@ -411,15 +422,15 @@ class EstabilidadTuningStrategy:
         puede_subir: bool,
     ) -> Tuple[float, float]:
         """
-        Subir frecuencia y voltaje a la vez hasta el techo que permita la
-        temperatura.
+        Llevar voltaje y frecuencia al techo que permita la temperatura.
 
-        Es el unico estado que mueve las dos palancas en la misma muestra. Se
-        permite porque aqui no se esta midiendo nada: la unica condicion de
-        parada es la temperatura, que es inmediata. Subir de una en una tardaria
-        el doble sin aportar informacion, y el destino es el mismo: el punto mas
-        alto alcanzable, que es tambien el mas estable y desde el que tiene
-        sentido empezar a bajar voltaje.
+        Primero el voltaje a MAX_VOLTAGE en una sola muestra, y solo despues la
+        frecuencia paso a paso: en cada muestra se mueve UNA palanca, nunca las
+        dos. El salto de voltaje se permite porque en este estado no se mide
+        nada, la unica condicion de parada es la temperatura y es inmediata;
+        escalonarlo alargaria la rampa sin aportar informacion. El destino es el
+        punto mas alto alcanzable, que es tambien el mas estable y desde el que
+        tiene sentido empezar a bajar voltaje.
         """
         # Primero el voltaje al maximo, de golpe. Es el punto de partida del
         # procedimiento: con el voltaje mas alto el chip aguanta la frecuencia mas
@@ -620,17 +631,18 @@ class EstabilidadTuningStrategy:
             # margen mayor que el coste: daba resultados identicos en ocho
             # escenarios, porque en la practica esta rama casi no se ejerce. Era
             # codigo muerto.
+            # Un solo motivo posible, y no tres: la guarda exige
+            # f >= max_frequency, asi que las otras dos razones por las que no se
+            # pudo subir frecuencia (sin margen termico, o techo aprendido) no
+            # llegan aqui. Cuando esta condicion era ancha se distinguian los
+            # tres casos; al estrecharla quedaron dos ramas inalcanzables que
+            # describian un comportamiento que ya no existe.
             if f >= self.max_frequency and v > self.min_voltage:
                 nueva_v = v - self.voltage_step
-                if f >= self.max_frequency:
-                    motivo = f"la frecuencia ya en el maximo {self.max_frequency}MHz"
-                elif not puede_subir:
-                    motivo = f"a {temp}C no hay margen para subir frecuencia"
-                else:
-                    motivo = f"{f + self.frequency_step}MHz ya fallo antes"
                 console.print(
                     f"[{SECONDARY_ACCENT}]OPTIMIZAR: errores {med:.2f}% con "
-                    f"margen y {motivo}, bajando voltaje a {nueva_v}mV[/]"
+                    f"margen y la frecuencia ya en el maximo "
+                    f"{self.max_frequency}MHz, bajando voltaje a {nueva_v}mV[/]"
                 )
                 return nueva_v, f
 
@@ -671,10 +683,19 @@ class EstabilidadTuningStrategy:
         hardware, asi que se recorta una ultima vez: MAX_VOLTAGE y
         MAX_FREQUENCY son un tope real y no una intencion. Cubre tambien el caso
         de recibir un valor actual ya fuera de rango.
+
+        Y se devuelven enteros. Son milivoltios y megahercios que van a la API del
+        miner, no magnitudes continuas: los YAML los declaran enteros y AxeOS no
+        aplica fracciones. Si entra un valor con decimales (de la web de AxeOS, de
+        un --frequency con coma) y sale igual, la estrategia sigue sumando pasos
+        enteros encima y el decimal se arrastra hasta el final de la ejecucion.
+        Se corta aqui, que es el unico sitio por el que pasan todas las salidas.
         """
         v = max(self.min_voltage, min(self.max_voltage, nueva_v))
         f = max(self.min_frequency, min(self.max_frequency, nueva_f))
-        if v != nueva_v or f != nueva_f:
+        recortado = v != nueva_v or f != nueva_f
+        v, f = int(round(v)), int(round(f))
+        if recortado:
             console.print(
                 f"[{WARNING_COLOR}]Recortando a los limites seguros: "
                 f"{nueva_v}mV/{nueva_f}MHz -> {v}mV/{f}MHz "

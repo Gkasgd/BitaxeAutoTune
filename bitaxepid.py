@@ -119,23 +119,31 @@ def main() -> None:
             f"El hashrate no interviene en las decisiones."
         )
     else:
+        # Las ganancias PID_* y HASHRATE_SETPOINT ya no se pasan: no hay PID ni
+        # objetivo de hashrate. Siguen siendo claves obligatorias en los YAML
+        # (validate_config las exige) para no invalidar los ficheros existentes.
         tuning_strategy = PIDTuningStrategy(
-            kp_freq=config["PID_FREQ_KP"],
-            ki_freq=config["PID_FREQ_KI"],
-            kd_freq=config["PID_FREQ_KD"],
-            kp_volt=config["PID_VOLT_KP"],
-            ki_volt=config["PID_VOLT_KI"],
-            kd_volt=config["PID_VOLT_KD"],
             min_voltage=config["MIN_VOLTAGE"],
             max_voltage=config["MAX_VOLTAGE"],
             min_frequency=config["MIN_FREQUENCY"],
             max_frequency=config["MAX_FREQUENCY"],
             voltage_step=config["VOLTAGE_STEP"],
             frequency_step=config["FREQUENCY_STEP"],
-            setpoint=config["HASHRATE_SETPOINT"],
-            sample_interval=config["SAMPLE_INTERVAL"],
             target_temp=config["TARGET_TEMP"],
             power_limit=config["POWER_LIMIT"],
+            temp_margin=config.get("TEMP_MARGIN", 2.0),
+            # ERROR_TARGET_PERCENT es opcional aqui (a diferencia de la
+            # estrategia de estabilidad, que sin el no puede decidir nada). Si
+            # no esta, esta estrategia decide solo con temperatura y potencia.
+            error_target=config.get("ERROR_TARGET_PERCENT"),
+            error_hysteresis=config.get("ERROR_HYSTERESIS", 0.5),
+            estable_para_bajar=config.get("ERROR_SETTLE", 3),
+        )
+        logging.info(
+            f"Estrategia por limites: temperatura objetivo {config['TARGET_TEMP']}C, "
+            f"limite {config['POWER_LIMIT']}W, objetivo de errores "
+            f"{config.get('ERROR_TARGET_PERCENT', 'sin definir')}. "
+            f"El hashrate no interviene en las decisiones."
         )
     terminal_ui = NullTerminalUI() if args.log_to_console else RichTerminalUI()
 
