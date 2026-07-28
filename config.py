@@ -149,18 +149,70 @@ def clamp_initial_values(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
+def validate_ranges(config: Dict[str, Any]) -> None:
+    """
+    Comprobar que los limites de voltaje y frecuencia no estan invertidos.
+
+    Es la unica validacion del proyecto que no se puede sustituir por un
+    recorte, porque el recorte es justo lo que deja de funcionar. Tanto
+    `_cerrar` (estrategia de estabilidad) como `apply_strategy` (PID) cierran
+    con `max(minimo, min(maximo, valor))`, que es correcto SOLO si
+    minimo <= maximo: con los limites al reves gana el `max()` exterior y la
+    funcion devuelve MIN_VOLTAGE, es decir, un valor POR ENCIMA del tope que
+    esa misma linea existe para imponer. Un solo digito mal en un YAML de
+    usuario convierte la red de seguridad en su contrario, y lo que sale de
+    ahi va directo al voltaje del core.
+
+    Por eso aqui se aborta y no se recorta ni se reordena: unos limites
+    invertidos no son un valor fuera de rango que se pueda acomodar, son una
+    configuracion que no expresa ninguna intencion interpretable. Adivinar
+    cual de los dos numeros quiso poner el usuario seria peor que pararse.
+
+    Args:
+        config (Dict[str, Any]): Configuracion ya fusionada.
+
+    Raises:
+        SystemExit: Si algun par de limites esta invertido.
+    """
+    invertidos = []
+    for low_key, high_key, unit in (
+        ("MIN_VOLTAGE", "MAX_VOLTAGE", "mV"),
+        ("MIN_FREQUENCY", "MAX_FREQUENCY", "MHz"),
+    ):
+        low = config.get(low_key)
+        high = config.get(high_key)
+        if low is None or high is None:
+            # Las claves que faltan las informa validate_config.
+            continue
+        if low > high:
+            invertidos.append(
+                f"{low_key}={low}{unit} > {high_key}={high}{unit}"
+            )
+    if invertidos:
+        logger.error(
+            "Limites invertidos en la configuracion: "
+            + "; ".join(invertidos)
+            + ". El recorte de seguridad no puede funcionar con el minimo por "
+            "encima del maximo (devolveria el minimo, saltandose el tope), "
+            "asi que no se arranca."
+        )
+        sys.exit(1)
+
+
 def validate_config(config: Dict[str, Any]) -> None:
     """
     Validate that required configuration keys are present.
 
-    Tambien recorta los valores iniciales al rango configurado; ver
-    `clamp_initial_values`.
+    Tambien comprueba que los limites no esten invertidos (ver
+    `validate_ranges`) y recorta los valores iniciales al rango configurado
+    (ver `clamp_initial_values`). El orden importa: sin `validate_ranges` por
+    delante, `clamp_initial_values` recortaria contra un rango imposible.
 
     Args:
         config (Dict[str, Any]): Configuration dictionary to validate.
 
     Raises:
-        SystemExit: If required keys are missing.
+        SystemExit: If required keys are missing or limits are inverted.
     """
     required_keys = [
         "INITIAL_VOLTAGE",
@@ -189,4 +241,5 @@ def validate_config(config: Dict[str, Any]) -> None:
     if missing_keys:
         logger.error(f"Missing required config keys: {', '.join(missing_keys)}")
         sys.exit(1)
+    validate_ranges(config)
     clamp_initial_values(config)

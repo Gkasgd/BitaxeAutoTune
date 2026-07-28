@@ -168,6 +168,31 @@ def measure_latency(
     return median_latency
 
 
+def _pool_inalcanzable(pool: Any) -> Dict[str, Any]:
+    """
+    Devolver la entrada de un pool que no se ha podido medir.
+
+    Latencia infinita y puerto 0, que es como `get_fastest_pools` reconoce lo
+    que hay que descartar al ordenar. Se conservan las demas claves del original
+    para no perder informacion al reescribir pools.yaml.
+
+    Args:
+        pool (Any): Entrada tal como venia del YAML. Puede no ser un dict.
+
+    Returns:
+        Dict[str, Any]: Copia marcada como inalcanzable.
+    """
+    base = dict(pool) if isinstance(pool, dict) else {"endpoint": repr(pool)}
+    base.update(
+        {
+            "latency": float("inf"),
+            "port": 0,
+            "last_tested": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    )
+    return base
+
+
 def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
     """
     Loads pools from a YAML file, measures latency for each, and saves results back to file
@@ -192,43 +217,57 @@ def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
     updated_pools = []
 
     for pool in pools:
+        # El endpoint se lee FUERA del try, y no dentro como antes: un pool sin
+        # la clave lanzaba KeyError, que el `except ValueError` no capturaba, y
+        # una sola entrada mal escrita en pools.yaml abortaba la medicion de
+        # todas las demas. Peor: el mensaje del except referenciaba
+        # `endpoint_str`, que en ese camino podia estar sin asignar, asi que el
+        # KeyError original quedaba enmascarado por un UnboundLocalError.
+        #
+        # Un pool ilegible se marca con latencia infinita y se conserva en la
+        # lista, igual que uno inalcanzable: get_fastest_pools ya descarta los
+        # infinitos al ordenar, y mantenerlo evita que reescribir el fichero
+        # borre entradas que el usuario solo escribio mal.
+        if not isinstance(pool, dict) or "endpoint" not in pool:
+            logger.error(
+                f"Pool sin clave 'endpoint', se marca como inalcanzable: {pool!r}"
+            )
+            updated_pools.append(_pool_inalcanzable(pool))
+            continue
+
+        endpoint_str = pool["endpoint"]
         try:
-            endpoint_str = pool["endpoint"]
             parsed = parse_stratum_url(endpoint_str)
-            hostname, port = parsed["hostname"], parsed["port"]
-            latency = measure_latency(hostname, port)
+        except (ValueError, AttributeError) as e:
+            # AttributeError cubre un endpoint que no es cadena (un numero, una
+            # lista): parse_stratum_url llama a .strip() sobre lo que reciba.
+            logger.error(f"Error parsing endpoint {endpoint_str!r}: {e}")
+            updated_pools.append(_pool_inalcanzable(pool))
+            continue
 
-            # Create new dict with all existing data plus latency info
-            updated_pool = pool.copy()
-            updated_pool.update(
-                {
-                    "latency": latency,
-                    "port": port,
-                    "last_tested": time.strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-            updated_pools.append(updated_pool)
+        hostname, port = parsed["hostname"], parsed["port"]
+        latency = measure_latency(hostname, port)
 
-            logger.debug(
-                f"Updated pool data for {endpoint_str}: latency={latency:.0f}ms"
-            )
+        # Create new dict with all existing data plus latency info
+        updated_pool = pool.copy()
+        updated_pool.update(
+            {
+                "latency": latency,
+                "port": port,
+                "last_tested": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        updated_pools.append(updated_pool)
 
-        except ValueError as e:
-            logger.error(f"Error parsing endpoint {endpoint_str}: {e}")
-            updated_pool = pool.copy()
-            updated_pool.update(
-                {
-                    "latency": float("inf"),
-                    "port": 0,
-                    "last_tested": time.strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-            updated_pools.append(updated_pool)
+        logger.debug(f"Updated pool data for {endpoint_str}: latency={latency:.0f}ms")
 
-    # Try to save the updated data
+    # Try to save the updated data.
+    # El nombre del temporal se calcula FUERA del try: el `except` de abajo lo
+    # usa para limpiar, y asignandolo dentro quedaba sin definir si la primera
+    # linea del try era justo la que fallaba, convirtiendo el error de escritura
+    # en un UnboundLocalError.
+    temp_file = f"{yaml_file}.tmp"
     try:
-        # First write to a temporary file
-        temp_file = f"{yaml_file}.tmp"
         with open(temp_file, "w") as f:
             yaml.safe_dump(updated_pools, f, default_flow_style=False, sort_keys=False)
 
@@ -251,8 +290,10 @@ def measure_pools(yaml_file: str = "pools.yaml") -> List[Dict[str, Any]]:
         if os.path.exists(temp_file):
             try:
                 os.remove(temp_file)
-            except:
-                pass
+            except OSError as limpieza:
+                # Un `except:` desnudo aqui tragaba tambien KeyboardInterrupt:
+                # un Ctrl-C durante la limpieza quedaba ignorado en silencio.
+                logger.debug(f"No se pudo borrar el temporal {temp_file}: {limpieza}")
         return updated_pools
 
     return updated_pools

@@ -209,6 +209,14 @@ MANAGE_MINER_POOLS: FALSE
 # Metricas en JSON en http://<host>:8093/metrics. Sirve tambien para confirmar
 # de un vistazo que este perfil se cargo: la respuesta incluye los limites.
 # Devuelve {"endpoints": []} hasta la primera muestra del bucle.
+#
+# OJO: el endpoint escucha en TODAS las interfaces y NO tiene autenticacion.
+# Cualquiera en la misma red puede leer las metricas de operacion del miner
+# (hashrate, temperatura, potencia, MAC) y los limites de este perfil. Las
+# claves que identifican donde se mina o donde estan los ficheros del host
+# (PRIMARY_STRATUM, BACKUP_STRATUM, POOLS_FILE, USER_FILE, LOG_FILE,
+# SNAPSHOT_FILE) se filtran antes de publicarse, pero el resto no. No expongas
+# el puerto 8093 fuera de la LAN.
 METRICS_SERVE: TRUE
 
 # =============================================================================
