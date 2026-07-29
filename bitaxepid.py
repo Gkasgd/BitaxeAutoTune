@@ -112,6 +112,7 @@ def main() -> None:
             error_settle=config.get("ERROR_SETTLE", 3),
             temp_margin=config.get("TEMP_MARGIN", 2.0),
             retry_ceiling=config.get("ERROR_RETRY_CEILING", 50),
+            lower_voltage_after=config.get("LOWER_VOLTAGE_AFTER", 4),
         )
         logging.info(
             f"Estrategia de estabilidad: objetivo {config['ERROR_TARGET_PERCENT']}% "

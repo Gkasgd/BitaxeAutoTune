@@ -388,6 +388,41 @@ check(
     f"con el suelo en 1200 no baja de 1210 aunque sobre margen: {v2}mV",
 )
 
+print("\n=== 13. la espera de bajar voltaje no es la de reintentar frecuencia ===")
+# Eran el mismo contador, y con el techo en su valor por defecto (50) el primer
+# paso de 10 mV tardaba 50 decisiones estables: dos horas y media a 30 s por
+# muestra, para un cambio cuyo efecto se mide en cuatro minutos. Son dos esperas
+# con precios distintos y ahora son dos perillas distintas.
+s_esp = nueva(retry_ceiling=50, lower_voltage_after=2)
+s_esp.estado = OPTIMIZAR
+s_esp._descartar = 0
+s_esp._ventana.extend([0.1] * 7)  # margen de sobra
+s_esp._f_techo = 825              # la frecuencia no puede subir
+v, f = 1200, 800
+bajadas = []
+for _ in range(6):
+    v, f = s_esp.apply_strategy(v, f, 60.0, 27.0, error_percent=0.1)
+    bajadas.append(v)
+check(
+    v < 1200,
+    f"con lower_voltage_after=2 baja en 6 muestras, sin esperar 50: {bajadas}",
+)
+
+# Y la perilla se respeta: con la espera alta NO baja en esas mismas muestras,
+# aunque el techo sea bajo. Asi se comprueba que ya no las decide el mismo valor.
+s_lento = nueva(retry_ceiling=1, lower_voltage_after=50)
+s_lento.estado = OPTIMIZAR
+s_lento._descartar = 0
+s_lento._ventana.extend([0.1] * 7)
+s_lento._f_techo = 825
+v2, f2 = 1200, 800
+for _ in range(6):
+    v2, f2 = s_lento.apply_strategy(v2, f2, 60.0, 27.0, error_percent=0.1)
+check(
+    v2 == 1200,
+    f"con lower_voltage_after=50 no baja aunque retry_ceiling sea 1: {v2}mV",
+)
+
 print("\n" + "=" * 70)
 if fallos:
     print(f"FALLAN {len(fallos)} comprobaciones:")

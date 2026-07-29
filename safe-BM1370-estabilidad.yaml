@@ -194,7 +194,34 @@ TEMP_MARGIN: 2.0
 #     5 -> 20-28 %    10 -> 12-25 %    20 -> 12-15 %
 #    50 ->  6-10 %   100 ->  3-7 %   sin reintento -> 0 % pero pegado abajo
 # 50 elige el lado del cumplimiento, que es lo que se pide.
+#
+# OJO: esto es SOLO la frecuencia. La bajada de voltaje tiene su propia espera
+# (LOWER_VOLTAGE_AFTER), porque no cuesta lo mismo.
 ERROR_RETRY_CEILING: 50
+
+# Cuantas decisiones estables se exigen antes de probar un paso de voltaje hacia
+# abajo, buscando el minimo que aguanta.
+#
+# Antes esto usaba ERROR_RETRY_CEILING, o sea 50 decisiones: a SAMPLE_INTERVAL 30
+# con ERROR_SETTLE 1 y ERROR_WINDOW 7, el primer paso de 10 mV tardaba unas dos
+# horas y media. Era pagar por bajar 10 mV el precio de reintentar una frecuencia,
+# que es mucho mas caro: subir frecuencia sube el calor y los errores de golpe,
+# mientras que un paso de voltaje se mide en 4 minutos y, si se pasa, la
+# prioridad 3 lo devuelve arriba en la decision siguiente.
+#
+# Medido con el ruido real (desviacion 1.24), 30 semillas, con el techo fijo en
+# 50. Tiempo por encima del objetivo del 2 %, y cuanto tarda el primer paso:
+#      1 -> 4.5 % de media, primer paso  22 min
+#      2 -> 4.3 %                        25 min
+#      4 -> 3.1 %                        30 min     <- por defecto
+#      6 -> 3.0 %                        34 min
+#     10 -> 1.9 %                        44 min
+#     50 -> 0.0 %                       144 min     <- lo que habia antes
+#
+# 4 es el codo: un tercio del incumplimiento que da la espera de 1, sin las dos
+# horas y media. Bajalo a 1-2 si prefieres convergencia rapida, subelo si el
+# ahorro de milivatios te da igual.
+LOWER_VOLTAGE_AFTER: 4
 
 # =============================================================================
 # 6. COMPORTAMIENTO
