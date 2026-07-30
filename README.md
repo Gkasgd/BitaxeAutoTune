@@ -35,6 +35,7 @@ docker compose logs -f  # ver qué hace (Ctrl+C solo sale del log)
 __________________________
 los cambios se hacen aquí
 nano ~/BitaxePID/SAFE-BM1370-estabilidad.yaml
+<img width="1106" height="267" alt="{6C70C8A8-B84D-4ABD-8C03-DBFB2B987844}" src="https://github.com/user-attachments/assets/b04b3db1-5489-4345-b4dc-492dadd4d95f" />
 
 <img width="1876" height="939" alt="{B745F054-2446-4075-9851-5827AB933948}" src="https://github.com/user-attachments/assets/99db3717-d58b-4fbd-b69a-90a6f41bd97c" />
 
