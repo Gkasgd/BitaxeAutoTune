@@ -23,6 +23,7 @@ El hashrate objetivo NO IMPORTA, lo que importa es la TEMPERATURA, la FRECUENCIA
 Recomiendo dejar el FAN del ASIC en una velocidad fija, ya que el programa mismo busca la temperatura objetivo,
 por lo que el FAN del ASIC va a quedar al 100% si lo dejan en AUTO en la configuración de AxeOS.
 El programa corre en un servidor de Umbrel dentro de la misma red que la Bitaxe, ya que éste a demostrado su operatividad 24/7 durante años.
+En la configuración se puede DESACTIVAR LA MEDICIÓN DE POOLS Y SU POSTERIOR CONFIGURACIÓN, usando las que ya tenés cargadas en las Bitaxe.
 
 
 cd ~/BitaxePID
