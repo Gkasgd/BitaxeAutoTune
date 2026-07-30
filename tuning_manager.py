@@ -31,8 +31,35 @@ from logger import Logger
 from metrics_server import update_metrics
 from stratum import get_fastest_pools, parse_stratum_url
 from tuning import PIDTuningStrategy
+from tuning_estabilidad import EstabilidadTuningStrategy
 from ui_null import NullTerminalUI
 from ui_rich import RichTerminalUI
+
+
+def _a_rejilla(valor: Any, paso: Any) -> Any:
+    """Redondear `valor` al multiplo de `paso` mas cercano, como entero.
+
+    Voltaje y frecuencia son magnitudes que se escriben en el hardware, y todos
+    los YAML las declaran como enteros. Un valor con decimales no viene de la
+    configuracion: viene de fuera (la web de AxeOS, un --frequency con coma, o el
+    reloj efectivo que reporta el firmware). Si se adopta sin cuantizar, la
+    estrategia le suma pasos enteros y el desfase no se corrige nunca.
+
+    Sin paso valido se limita a redondear a entero: es siempre mejor que arrastrar
+    decimales. Si el valor no es un numero se devuelve tal cual y lo rechaza quien
+    lo use, en vez de romper aqui el bucle de tuning.
+    """
+    try:
+        v = float(valor)
+    except (TypeError, ValueError):
+        return valor
+    try:
+        p = float(paso)
+    except (TypeError, ValueError):
+        p = 0.0
+    if p <= 0:
+        return int(round(v))
+    return int(round(v / p) * p)
 
 
 class TuningManager:
@@ -40,7 +67,7 @@ class TuningManager:
 
     def __init__(
         self,
-        tuning_strategy: PIDTuningStrategy,
+        tuning_strategy: Union[PIDTuningStrategy, EstabilidadTuningStrategy],
         api_client: BitaxeAPIClient,
         logger: Logger,
         config_loader: YamlConfigLoader,
@@ -249,12 +276,73 @@ class TuningManager:
         time.sleep(1)
         self.api_client.restart()
 
+    def _adoptar_ajuste_externo(self, system_info: Dict[str, Any]) -> None:
+        """
+        Si el miner tiene otro voltaje o frecuencia de los que creemos, adoptarlo.
+
+        El usuario puede cambiar voltaje y frecuencia desde la web de AxeOS sin
+        pasar por el tuner. Hasta ahora el bucle decidia siempre sobre sus propias
+        variables y no volvia a mirar el miner, asi que el errorPercentage medido
+        correspondia al ajuste DEL USUARIO mientras la decision se aplicaba sobre
+        el ajuste DEL PROGRAMA: los dos lados de la ecuacion dejaban de
+        corresponder.
+
+        Se adopta el valor del usuario y se sigue optimizando desde ahi, en vez de
+        reimponer el propio. La temperatura sigue mandando: es la rama de mayor
+        prioridad de la estrategia y no consulta la ventana de errores, asi que un
+        ajuste externo que caliente demasiado se corrige en la muestra siguiente
+        sin necesidad de nada especial aqui.
+
+        Se invalida la ventana porque lo medido antes describe otro ajuste.
+
+        El valor que devuelve AxeOS se cuantiza a la rejilla de FREQUENCY_STEP y
+        VOLTAGE_STEP antes de adoptarlo. Si se adopta tal cual y trae decimales
+        (493.75, porque la web permite valores libres o porque el firmware
+        reporta el reloj efectivo y no el pedido), la estrategia suma y resta
+        pasos enteros sobre esa base y el ajuste se queda fuera de rejilla para
+        todo lo que reste de ejecucion: 493.75, 498.75, 503.75... Ninguno de esos
+        valores es uno que el usuario haya configurado ni que se pueda comparar
+        con los limites de forma limpia.
+        """
+        real_v = system_info.get("coreVoltage")
+        real_f = system_info.get("frequency")
+        if real_v is None or real_f is None:
+            return
+        real_v = _a_rejilla(real_v, self.config.get("VOLTAGE_STEP"))
+        real_f = _a_rejilla(real_f, self.config.get("FREQUENCY_STEP"))
+        # Margen de 1 unidad: el miner redondea y no conviene disparar esto por
+        # un decimal de diferencia.
+        if abs(real_v - self.target_voltage) < 1 and abs(real_f - self.target_frequency) < 1:
+            return
+        logging.info(
+            f"Ajuste cambiado fuera del tuner: el miner esta en {real_v}mV/"
+            f"{real_f}MHz y no en {self.target_voltage}mV/{self.target_frequency}MHz. "
+            f"Se adopta y se sigue optimizando desde ahi."
+        )
+        self.target_voltage = real_v
+        self.target_frequency = real_f
+        self.tuning_strategy.ajuste_cambiado_fuera()
+
     def _initialize_hardware(self) -> None:
-        """Initialize miner hardware settings."""
+        """
+        Initialize miner hardware settings.
+
+        Un fallo aqui no aborta: el miner sigue con el ajuste que ya tenia, que
+        es un punto de partida valido, y el bucle empieza a decidir desde ahi en
+        cuanto la primera muestra le diga en que esta. Se registra como error
+        porque explica por que el CSV no arranca en INITIAL_VOLTAGE.
+        """
         logging.info(
             f"Initializing hardware: Voltage={self.target_voltage}mV, Frequency={self.target_frequency}MHz"
         )
-        self.api_client.set_settings(self.target_voltage, self.target_frequency)
+        if not self.api_client.set_settings(
+            self.target_voltage, self.target_frequency
+        ):
+            logging.error(
+                f"No se pudo fijar el ajuste inicial {self.target_voltage}mV/"
+                f"{self.target_frequency}MHz: se sigue con el que tenga el "
+                f"miner y se adoptara en la primera muestra"
+            )
 
     def _load_stratum_users(self) -> Dict[str, str]:
         """
@@ -283,66 +371,176 @@ class TuningManager:
         print("\nTuning stopped gracefully")
 
     def start_tuning(self) -> None:
-        """Start the tuning process, adjusting settings based on system info and exposing metrics if enabled."""
+        """
+        Start the tuning process, adjusting settings based on system info and exposing metrics if enabled.
+
+        El manejo de errores es por iteracion y no por bucle a proposito. Con un
+        unico `except` alrededor del `while`, cualquier excepcion imprevista
+        (un campo raro en la respuesta del miner, un disco lleno al escribir el
+        CSV) sacaba del bucle, la registraba y RETORNABA: el proceso terminaba
+        con codigo 0, asi que `restart: unless-stopped` lo tomaba por una salida
+        limpia y no reiniciaba nada. El miner se quedaba con el ultimo ajuste
+        aplicado y sin nadie vigilando la temperatura, indefinidamente.
+
+        Un fallo suelto en una muestra no es motivo para dejar el hardware sin
+        supervision: se registra y se sigue con la siguiente. Lo que si termina
+        el bucle es KeyboardInterrupt, que es una parada pedida por el usuario.
+        """
         try:
             if isinstance(self.terminal_ui, RichTerminalUI):
                 self.terminal_ui.start()
             logging.info("Starting BitaxePID tuner...")
             while self.running:
-                system_info = self.api_client.get_system_info()
-                if not system_info:
+                try:
+                    self._tune_once()
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    # Sin logging.exception se perderia la traza, y con ella la
+                    # unica pista de donde fallo una muestra que ya paso.
+                    logging.exception(f"Error en la muestra de tuning: {e}")
                     time.sleep(1)
                     continue
-
-                self.terminal_ui.update(
-                    system_info, self.target_voltage, self.target_frequency
-                )
-                metrics = {
-                    "mac_address": self.mac_address,
-                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "target_frequency": self.target_frequency,
-                    "target_voltage": self.target_voltage,
-                    "hashrate": system_info.get("hashRate", 0),
-                    "temp": system_info.get("temp", 0),
-                    "pid_settings": self.config,
-                    "power": system_info.get("power", 0),
-                    "board_voltage": system_info.get("voltage", 0),
-                    "current": system_info.get("current", 0),
-                    "core_voltage_actual": system_info.get("coreVoltageActual", 0),
-                    "frequency": system_info.get("frequency", 0),
-                    "fanrpm": system_info.get("fanrpm", 0),
-                }
-                self.logger.log_to_csv(**metrics)
-                if self.config.get("METRICS_SERVE", False):
-                    update_metrics(self.mac_address, metrics)
-
-                new_voltage, new_frequency = self.tuning_strategy.apply_strategy(
-                    current_voltage=self.target_voltage,
-                    current_frequency=self.target_frequency,
-                    temp=system_info.get("temp", 0),
-                    hashrate=system_info.get("hashRate", 0),
-                    power=system_info.get("power", 0),
-                )
-
-                if (
-                    new_voltage != self.target_voltage
-                    or new_frequency != self.target_frequency
-                ):
-                    self.target_voltage = new_voltage
-                    self.target_frequency = new_frequency
-                    self.api_client.set_settings(
-                        self.target_voltage, self.target_frequency
-                    )
-                    self.logger.save_snapshot(
-                        self.target_voltage, self.target_frequency
-                    )
 
                 time.sleep(self.sample_interval)
         except KeyboardInterrupt:
             self.stop_tuning()
-        except Exception as e:
-            logging.error(f"Error in tuning loop: {e}")
-            time.sleep(1)
         finally:
             if isinstance(self.terminal_ui, RichTerminalUI):
                 self.terminal_ui.stop()
+
+    # Claves de la configuracion que NO salen por el servidor de metricas. Son
+    # las que identifican donde se mina y con que credenciales, o rutas del
+    # sistema de ficheros del host: nada de eso sirve para un panel de Grafana y
+    # todo ello describe la instalacion a quien pregunte.
+    _CLAVES_NO_PUBLICABLES = frozenset(
+        {
+            "PRIMARY_STRATUM",
+            "BACKUP_STRATUM",
+            "USER_FILE",
+            "POOLS_FILE",
+            "LOG_FILE",
+            "SNAPSHOT_FILE",
+        }
+    )
+
+    def _metricas_publicables(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Quitar de una muestra lo que no debe salir por el endpoint HTTP.
+
+        `pid_settings` era `self.config` entera, y el servidor de metricas la
+        servia en 0.0.0.0:8093 sin autenticacion: con PRIMARY_STRATUM declarado,
+        la URL del pool quedaba publicada en la red. Los limites y las ganancias
+        si se conservan, porque son justo lo que hace util el endpoint para
+        diagnosticar (y para confirmar de un vistazo que se cargo el perfil que
+        se creia).
+
+        No es una medida de seguridad completa: el endpoint sigue siendo abierto
+        y las metricas de operacion del miner siguen ahi. Solo deja de regalar
+        las credenciales y la topologia.
+
+        Args:
+            metrics (Dict[str, Any]): Muestra tal como se escribe en el CSV.
+
+        Returns:
+            Dict[str, Any]: Copia apta para publicar. El original no se toca,
+                porque el CSV si lleva la configuracion completa.
+        """
+        publicables = dict(metrics)
+        settings = publicables.get("pid_settings")
+        if isinstance(settings, dict):
+            publicables["pid_settings"] = {
+                clave: valor
+                for clave, valor in settings.items()
+                if clave not in self._CLAVES_NO_PUBLICABLES
+            }
+        return publicables
+
+    def _tune_once(self) -> None:
+        """
+        Una muestra: leer el miner, decidir y aplicar.
+
+        Separado de `start_tuning` para que el `except` de la iteracion cubra
+        exactamente el trabajo de una muestra, sin envolver la espera ni el
+        arranque y parada de la UI.
+        """
+        system_info = self.api_client.get_system_info()
+        if not system_info:
+            time.sleep(1)
+            return
+
+        self.terminal_ui.update(
+            system_info, self.target_voltage, self.target_frequency
+        )
+        metrics = {
+            "mac_address": self.mac_address,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "target_frequency": self.target_frequency,
+            "target_voltage": self.target_voltage,
+            "hashrate": system_info.get("hashRate", 0),
+            "temp": system_info.get("temp", 0),
+            "pid_settings": self.config,
+            "power": system_info.get("power", 0),
+            "board_voltage": system_info.get("voltage", 0),
+            "current": system_info.get("current", 0),
+            "core_voltage_actual": system_info.get("coreVoltageActual", 0),
+            "frequency": system_info.get("frequency", 0),
+            "fanrpm": system_info.get("fanrpm", 0),
+        }
+        if isinstance(self.tuning_strategy, EstabilidadTuningStrategy):
+            metrics["error_percent"] = system_info.get("errorPercentage")
+            metrics["error_target"] = self.tuning_strategy.error_target
+            metrics["estado"] = self.tuning_strategy.estado
+        self.logger.log_to_csv(**metrics)
+        if self.config.get("METRICS_SERVE", False):
+            # Al servidor HTTP va una version filtrada, no `metrics` tal cual: el
+            # endpoint :8093/metrics no tiene autenticacion y escucha en todas las
+            # interfaces, mientras que el CSV es un fichero local y si puede
+            # llevar la configuracion entera.
+            update_metrics(self.mac_address, self._metricas_publicables(metrics))
+
+        # errorPercentage lo consumen las DOS estrategias: ninguna decide ya por
+        # hashrate. Si el miner no lo reporta llega None, y cada estrategia
+        # omite el criterio de errores en vez de suponer un 0% que autorizaria
+        # subidas a ciegas.
+        kwargs = {"error_percent": system_info.get("errorPercentage")}
+        # La adopcion de cambios externos sigue siendo solo de la estrategia de
+        # estabilidad: es la que mantiene ventana de errores y techo aprendido,
+        # y por tanto la unica que necesita enterarse de que el punto de partida
+        # ya no es el suyo.
+        if isinstance(self.tuning_strategy, EstabilidadTuningStrategy):
+            self._adoptar_ajuste_externo(system_info)
+
+        # El hashrate NO se pasa: ninguna estrategia decide con el. Se sigue
+        # midiendo y registrando en el CSV, que es donde sirve para ver el
+        # resultado de un ajuste, pero no entra en la decision.
+        new_voltage, new_frequency = self.tuning_strategy.apply_strategy(
+            current_voltage=self.target_voltage,
+            current_frequency=self.target_frequency,
+            temp=system_info.get("temp", 0),
+            power=system_info.get("power", 0),
+            **kwargs,
+        )
+
+        if (
+            new_voltage != self.target_voltage
+            or new_frequency != self.target_frequency
+        ):
+            # El ajuste solo se da por vigente si el miner lo acepto. Si la
+            # escritura falla, `target_*` se queda como estaba: asi la decision
+            # siguiente parte del ajuste que el miner tiene de verdad, y
+            # `_adoptar_ajuste_externo` no confunde un fallo de red con un
+            # cambio hecho por el usuario en la web de AxeOS.
+            if self.api_client.set_settings(new_voltage, new_frequency):
+                self.target_voltage = new_voltage
+                self.target_frequency = new_frequency
+                self.logger.save_snapshot(
+                    self.target_voltage, self.target_frequency
+                )
+            else:
+                logging.error(
+                    f"No se pudo aplicar {new_voltage}mV/{new_frequency}MHz: "
+                    f"se mantiene {self.target_voltage}mV/"
+                    f"{self.target_frequency}MHz y se reintentara en la "
+                    f"muestra siguiente"
+                )

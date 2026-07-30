@@ -1,62 +1,141 @@
-# safe-BM1370.yaml — perfil conservador para BM1370 (Bitaxe Gamma / 601)
+# safe-BM1370.yaml — perfil COMPLETO para BM1370 (Bitaxe Gamma / 601)
 #
-# Se pasa con --config y sus claves se aplican ENCIMA de BM1370.yaml, que el
-# tuner elige solo leyendo el ASICModel del miner. Solo hace falta declarar lo
-# que se quiere cambiar; el resto se hereda.
+# Declara las 26 claves que el programa puede leer, en vez de heredar en
+# silencio las que falten del YAML del chip. Asi lo que ves aqui es exactamente
+# lo que corre: no hay que ir a mirar BM1370.yaml para saber con que ganancias
+# o con que suelos esta trabajando el PID.
 #
 #   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370.yaml
 #
-# Limites de fabrica del BM1370 para comparar: 1000-1250 mV y 400-625 MHz.
-# Este perfil se queda por debajo en ambos.
+# Como se aplica: el tuner lee el ASICModel del miner, carga <modelo>.yaml y
+# hace un update() con este fichero encima. Al declararlo todo, el YAML del
+# chip queda como red de seguridad y nada mas.
+#
+# AJUSTA LOS VALORES A TU HARDWARE. Los de aqui salen de dos sitios: los
+# limites y ganancias son los de BM1370.yaml del proyecto, y los topes y
+# objetivos estan puestos para un miner que en tus logs opera a 825 MHz /
+# 1200 mV / 27.3 W / 60 C. Nada de esto se ha medido en tu chip.
 
-# --- Los tres topes de seguridad -------------------------------------------
+# =============================================================================
+# 1. LIMITES DE FRECUENCIA  (MHz)
+# =============================================================================
 
-# El tuner baja frecuencia (y luego voltaje) en cuanto se pasa de aqui.
-TARGET_TEMP: 55.0
+# Tope duro. El bucle de tuning recorta aqui antes de escribir al miner, y el
+# valor inicial tambien se recorta (clamp_initial_values en config.py).
+MAX_FREQUENCY: 925
 
-# Tope duro de frecuencia. 500 en lugar de los 625 de fabrica.
-MAX_FREQUENCY: 500
+# Suelo. OJO, no es solo un limite de seguridad: es el ANCLA DEL PID.
+# La salida del controlador es un valor absoluto en MHz, y su termino integral
+# se inicializa recortado a (MIN_FREQUENCY, MAX_FREQUENCY). Con MIN_FREQUENCY
+# en 400, una caida de hashrate hace que el PID proponga ~475 MHz de golpe
+# aunque estuvieras a 825, porque su escala empieza en 400. Ponlo cerca de tu
+# punto de trabajo real.
+MIN_FREQUENCY: 475
 
-# Tope duro de voltaje. 1150 en lugar de los 1250 de fabrica.
-MAX_VOLTAGE: 1150
+# Frecuencia al arrancar. Cada ejecucion empieza aqui: no se carga el snapshot.
+INITIAL_FREQUENCY: 500
 
-# --- Arranque conservador --------------------------------------------------
-# Se arranca por debajo de los topes y se deja subir al PID, en vez de empezar
-# arriba y bajar. Asi el primer minuto tampoco pasa por un punto caliente.
-INITIAL_FREQUENCY: 450
-INITIAL_VOLTAGE: 1100
+# Cuanto se mueve la frecuencia por muestra en las ramas de temperatura y
+# potencia, y a que multiplo se redondea la salida del PID.
+FREQUENCY_STEP: 5
 
-# --- Coherencia con los topes ---------------------------------------------
-# El setpoint de hashrate es el objetivo que persigue el PID. Con la frecuencia
-# limitada a 500 MHz no se pueden alcanzar los ~500 GH/s del perfil de fabrica,
-# y un setpoint inalcanzable mantiene al controlador pidiendo mas para siempre:
-# acaba pegado al techo de voltaje sin ganar nada. Se baja a algo alcanzable
-# dentro de los limites.
-HASHRATE_SETPOINT: 400
+# =============================================================================
+# 2. LIMITES DE VOLTAJE  (mV)
+# =============================================================================
 
-# El limite de potencia se aplica con un margen del 7.5% (POWER_LIMIT * 1.075),
-# asi que 13.0 empieza a bajar voltaje alrededor de los 14 W.
-POWER_LIMIT: 13.0
+# Tope duro del voltaje del core.
+MAX_VOLTAGE: 1210
 
-# Muestreo cada 60 s: el hardware tarda en estabilizarse tras un cambio, y
-# medir mas a menudo hace que el PID reaccione a ruido.
+# Suelo, y ancla del PID de voltaje por el mismo motivo que MIN_FREQUENCY.
+MIN_VOLTAGE: 1180
+
+# Voltaje al arrancar.
+INITIAL_VOLTAGE: 1185
+
+# Paso de voltaje por muestra.
+VOLTAGE_STEP: 5
+
+# =============================================================================
+# 3. OBJETIVOS Y LIMITES DE OPERACION
+# =============================================================================
+
+# Temperatura OBJETIVO, no un maximo. En cuanto la temperatura la pasa, el
+# tuner baja un FREQUENCY_STEP por muestra, y si ya esta en MIN_FREQUENCY baja
+# un VOLTAGE_STEP. Es la rama de mas prioridad: manda sobre el hashrate.
+# Si tu miner reposa a 60 C, poner 55 aqui lo tiene bajando siempre.
+TARGET_TEMP: 60.0
+
+# Limite de potencia en W. Se compara con un margen del 7.5%: la reduccion de
+# voltaje empieza cuando la potencia pasa de POWER_LIMIT * 1.075. Con 28.0 el
+# corte real esta en 30.1 W. Para que el corte sea exactamente 30, pon 27.9.
+POWER_LIMIT: 30.0
+
+# Hashrate objetivo en GH/s que persiguen los dos PID. Si esta por encima de
+# lo que el miner puede dar dentro de los topes, el controlador pide mas para
+# siempre y se queda pegado al techo. Ponlo un poco POR DEBAJO de la media que
+# ves en tus logs, o cada fluctuacion normal saca al tuner de "System stable".
+HASHRATE_SETPOINT: 1550
+
+# Segundos entre muestras. El hardware tarda en estabilizarse tras un cambio;
+# muestrear mas a menudo hace que el PID reaccione a ruido.
 SAMPLE_INTERVAL: 60
 
-# --- Comportamiento -------------------------------------------------------
+# =============================================================================
+# 4. GANANCIAS DE LOS DOS CONTROLADORES PID
+# =============================================================================
+# Los valores del proyecto para el BM1370. Toca esto en ultimo lugar: si el
+# tuner oscila, casi siempre el problema esta en HASHRATE_SETPOINT o en
+# MIN_FREQUENCY, no en las ganancias.
+#
+# KP responde al error actual, KI acumula el error pasado (es el que domina
+# aqui, porque arranca anclado en MIN_FREQUENCY), KD reacciona al cambio.
 
-# No tocar la configuracion de pools del miner. Si algun dia se quiere lo
-# contrario, es mejor decirlo con --manage-pools en esa ejecucion concreta que
-# dejarlo activado en un fichero.
+PID_FREQ_KP: 0.2
+PID_FREQ_KI: 0.01
+PID_FREQ_KD: 0.02
+
+PID_VOLT_KP: 0.1
+PID_VOLT_KI: 0.01
+PID_VOLT_KD: 0.02
+
+# =============================================================================
+# 5. COMPORTAMIENTO
+# =============================================================================
+
+# No tocar la configuracion de pools stratum del miner. Consecuencia: el miner
+# tampoco se reinicia al arrancar el tuner, porque el reinicio vive dentro de
+# la secuencia de stratum. Si algun dia quieres lo contrario, es mejor pasar
+# --manage-pools en esa ejecucion concreta que dejarlo en TRUE aqui.
 MANAGE_MINER_POOLS: FALSE
 
-# Metricas en JSON en http://<host>:8093/metrics. Sirve tambien para
-# comprobar de un vistazo que este perfil se cargo: la respuesta incluye
-# MAX_VOLTAGE, MAX_FREQUENCY y TARGET_TEMP.
+# Metricas en JSON en http://<host>:8093/metrics. Sirve tambien para confirmar
+# de un vistazo que este perfil se cargo: la respuesta incluye los limites.
+# Devuelve {"endpoints": []} hasta la primera muestra del bucle.
 METRICS_SERVE: TRUE
 
-# Ficheros propios, para no mezclar el historial de este perfil con el del
-# perfil de fabrica. En data/ para que docker-compose.yml pueda montar ahi un
-# volumen y el historial sobreviva al contenedor; ejecutandolo directamente,
-# el directorio se crea solo.
+# =============================================================================
+# 6. FICHEROS
+# =============================================================================
+
+# Historial de tuning y ultimo estado aplicado. En data/ para que un volumen
+# de docker los conserve al recrear el contenedor.
 LOG_FILE: "data/bitaxepid_tuning_log_BM1370_safe.csv"
 SNAPSHOT_FILE: "data/bitaxepid_snapshot_BM1370_safe.json"
+
+# Lista de pools candidatos y credenciales. Son claves OBLIGATORIAS aunque
+# MANAGE_MINER_POOLS este en FALSE (validate_config las exige), asi que los
+# ficheros tienen que existir.
+POOLS_FILE: "pools.yaml"
+USER_FILE: "user.yaml"
+
+# =============================================================================
+# 7. STRATUM FIJO  (opcional — dejar comentado)
+# =============================================================================
+# Si se declaran AMBAS, el tuner usa estas dos en vez de medir latencias sobre
+# POOLS_FILE. Solo se leen cuando MANAGE_MINER_POOLS es TRUE.
+#
+# CUIDADO: con esto activado el tuner ESCRIBE la configuracion de pools en el
+# miner y lo reinicia. Dejalo comentado salvo que quieras exactamente eso.
+#
+# PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
+# BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"

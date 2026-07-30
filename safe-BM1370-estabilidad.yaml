@@ -1,0 +1,254 @@
+# safe-BM1370.yaml — perfil COMPLETO para BM1370 (Bitaxe Gamma / 601)
+#
+# Declara las 26 claves que el programa puede leer, en vez de heredar en
+# silencio las que falten del YAML del chip. Asi lo que ves aqui es exactamente
+# lo que corre: no hay que ir a mirar BM1370.yaml para saber con que ganancias
+# o con que suelos esta trabajando el PID.
+#
+#   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370.yaml
+#
+# Como se aplica: el tuner lee el ASICModel del miner, carga <modelo>.yaml y
+# hace un update() con este fichero encima. Al declararlo todo, el YAML del
+# chip queda como red de seguridad y nada mas.
+#
+# AJUSTA LOS VALORES A TU HARDWARE. Los de aqui salen de dos sitios: los
+# limites y ganancias son los de BM1370.yaml del proyecto, y los topes y
+# objetivos estan puestos para un miner que en tus logs opera a 825 MHz /
+# 1200 mV / 27.3 W / 60 C. Nada de esto se ha medido en tu chip.
+
+# =============================================================================
+# 1. LIMITES DE FRECUENCIA  (MHz)
+# =============================================================================
+
+# Tope duro. El bucle de tuning recorta aqui antes de escribir al miner, y el
+# valor inicial tambien se recorta (clamp_initial_values en config.py).
+MAX_FREQUENCY: 930
+
+# Suelo. Con ERROR_TUNING no es el ancla de ningun PID (no hay PID), pero sigue
+# siendo el limite inferior por el que el controlador nunca baja, y por tanto
+# define el espacio de busqueda por abajo.
+MIN_FREQUENCY: 400
+
+# Frecuencia al arrancar. Cada ejecucion empieza aqui: no se carga el snapshot.
+# Con ERROR_TUNING activado conviene arrancar EN EL MINIMO, porque el
+# procedimiento empieza subiendo (estado RAMPA) y asi recorre el camino
+# completo en vez de empezar a media escalera.
+#
+# OJO CON EL TIEMPO: de 475 a 925 con FREQUENCY_STEP 5 son 90 pasos, uno por
+# muestra, o sea unos 90 minutos de RAMPA a SAMPLE_INTERVAL 60 antes de llegar
+# a buscar voltaje. Es deliberado (recorrido completo y fino). Si algun dia
+# quieres saltarte esa hora y media, sube INITIAL_FREQUENCY cerca del punto de
+# trabajo real (~800) en vez de agrandar el paso.
+INITIAL_FREQUENCY: 400
+
+# Cuanto se mueve la frecuencia por decision.
+FREQUENCY_STEP: 10
+
+# =============================================================================
+# 2. LIMITES DE VOLTAJE  (mV)
+# =============================================================================
+
+# Tope duro del voltaje del core.
+MAX_VOLTAGE: 1250
+
+# Suelo. AQUI VIVE TODO EL TRABAJO de esta estrategia: la busqueda del voltaje
+# minimo estable solo puede moverse entre MIN_VOLTAGE y MAX_VOLTAGE. Con
+# 1180-1210 y VOLTAGE_STEP 5 son SEIS escalones, un margen estrecho: en la
+# practica la palanca que movera los errores sera la frecuencia, no el voltaje.
+# Si se quiere que el voltaje tenga recorrido real (y con el, el ahorro), el
+# numero a bajar es este.
+MIN_VOLTAGE: 1150
+
+# Voltaje al arrancar. En el minimo, por el mismo motivo que INITIAL_FREQUENCY.
+INITIAL_VOLTAGE: 1150
+
+# Paso de voltaje por decision.
+VOLTAGE_STEP: 1
+
+# =============================================================================
+# 3. OBJETIVOS Y LIMITES DE OPERACION
+# =============================================================================
+
+# Temperatura OBJETIVO, no un maximo. En cuanto la temperatura la pasa, el
+# tuner baja un FREQUENCY_STEP por muestra, y si ya esta en MIN_FREQUENCY baja
+# un VOLTAGE_STEP. Es la rama de mas prioridad: manda sobre el hashrate.
+# Si tu miner reposa a 60 C, poner 55 aqui lo tiene bajando siempre.
+TARGET_TEMP: 60.0
+
+# Limite de potencia en W. Se compara con un margen del 7.5%: la rama de
+# potencia actua cuando se pasa de POWER_LIMIT * 1.075, o sea 32.3 W con 30.0.
+# Para que el corte sea exactamente 30, pon 27.9.
+#
+# Con ERROR_TUNING esta rama baja FRECUENCIA, no voltaje: bajar voltaje aqui
+# dispararia los errores justo cuando hace falta estabilidad.
+POWER_LIMIT: 30.0
+
+# Hashrate objetivo en GH/s que persiguen los dos PID. Si esta por encima de
+# lo que el miner puede dar dentro de los topes, el controlador pide mas para
+# siempre y se queda pegado al techo. Ponlo un poco POR DEBAJO de la media que
+# ves en tus logs, o cada fluctuacion normal saca al tuner de "System stable".
+HASHRATE_SETPOINT: 1550
+
+# Segundos entre muestras. 30 porque g comprobo en su miner que la temperatura
+# y la tasa de errores reflejan un cambio de voltaje/frecuencia en unos 30 s: no
+# hace falta esperar mas para que la lectura corresponda al ajuste nuevo.
+#
+# Es la mitad del tiempo por decision: con ERROR_SETTLE 1 y ERROR_WINDOW 7 son
+# 8 muestras, o sea 4 minutos en vez de los 10 que salian con 60 s y 3 descartes.
+# Medido sobre el chip simulado con ambiente oscilante: el incumplimiento del
+# objetivo baja del 5% al 2-4% y la frecuencia media sube.
+#
+# OJO si se usa la estrategia PID (ERROR_TUNING en FALSE): alli 30 s hace que el
+# controlador reaccione a ruido de hashrate. Este valor esta elegido para
+# ERROR_TUNING.
+SAMPLE_INTERVAL: 30
+
+# =============================================================================
+# 4. GANANCIAS DE LOS DOS CONTROLADORES PID
+# =============================================================================
+# Los valores del proyecto para el BM1370. Toca esto en ultimo lugar: si el
+# tuner oscila, casi siempre el problema esta en HASHRATE_SETPOINT o en
+# MIN_FREQUENCY, no en las ganancias.
+#
+# KP responde al error actual, KI acumula el error pasado (es el que domina
+# aqui, porque arranca anclado en MIN_FREQUENCY), KD reacciona al cambio.
+
+PID_FREQ_KP: 0.2
+PID_FREQ_KI: 0.01
+PID_FREQ_KD: 0.02
+
+PID_VOLT_KP: 0.1
+PID_VOLT_KI: 0.01
+PID_VOLT_KD: 0.02
+
+# =============================================================================
+# 5. CONTROL POR ERRORES DE HARDWARE  (estrategia de estabilidad)
+# =============================================================================
+# Con ERROR_TUNING en TRUE se cambia de estrategia: el hashrate deja de ser un
+# objetivo y las decisiones las toman la temperatura y el porcentaje de errores
+# de hardware que reporta el miner (campo errorPercentage de AxeOS).
+#
+# El procedimiento es:
+#   1. RAMPA: subir frecuencia y voltaje a la vez hasta el techo que permita
+#      TARGET_TEMP. Es el punto mas alto y mas estable.
+#   2. BUSCAR_VOLTAJE: bajar el voltaje hasta que los errores tocan el objetivo,
+#      y al pasarse volver un paso atras. Queda el voltaje MINIMO que cumple.
+#   3. OPTIMIZAR: si los errores se pasan, subir voltaje; si sobra margen, subir
+#      frecuencia; y solo con la frecuencia ya al tope, seguir bajando voltaje.
+#
+# Con esto las seis ganancias PID_* de la seccion 4 NO se usan: no hay ningun
+# controlador PID en esta estrategia. Se dejan declaradas porque validate_config
+# las exige y porque volver a FALSE devuelve el comportamiento anterior.
+ERROR_TUNING: TRUE
+
+# El objetivo: porcentaje de errores de hardware que no se quiere superar.
+# OJO con el punto de partida: un BM1370 a 800 MHz / 1195 mV midio 12.6 % de
+# media. Bajar de ahi al 2 % puede exigir bastante menos frecuencia, o no ser
+# alcanzable dentro de MAX_VOLTAGE. Si no se alcanza, el tuner se queda en el
+# extremo del rango y lo avisa por log; no se rompe ni se pasa de los limites.
+ERROR_TARGET_PERCENT: 1.5
+
+# Banda muerta por debajo del objetivo, en puntos de porcentaje. Solo se
+# considera que "sobra margen" para subir frecuencia cuando los errores bajan de
+# (ERROR_TARGET_PERCENT - ERROR_HYSTERESIS). Sin esta banda el punto de
+# convergencia oscila entre dos escalones indefinidamente.
+ERROR_HYSTERESIS: 0.5
+
+# Muestras de la mediana movil. errorPercentage es RUIDOSO: cinco lecturas
+# consecutivas del BM1370, con voltaje y frecuencia constantes, dieron 11.08,
+# 13.85, 13.31, 11.44 y 13.25 por ciento. Un recorrido de 2.8 puntos sin que el
+# hardware cambiara. Decidir con una sola lectura hace que el ruido cruce el
+# umbral en los dos sentidos y el tuner no pare de moverse. Se usa la mediana
+# (no la media: un pico aislado no la mueve) de esta ventana.
+# Subirlo da decisiones mas fiables y mas lentas.
+ERROR_WINDOW: 7
+
+# Muestras que se descartan tras cada cambio de ajuste. errorPercentage es un
+# promedio interno de AxeOS y arrastra historia del ajuste anterior; sin este
+# margen se decidiria con datos del pasado.
+#
+# 1 (y no 3) porque g comprobo que el efecto de un cambio se ve en ~30 s: con
+# SAMPLE_INTERVAL 30, una muestra descartada ya cubre el asentamiento.
+#
+# NO CONFUNDIR asentamiento con ruido. Que la senal llegue a su valor en 30 s no
+# quita que ese valor oscile 2.8 puntos entre lecturas, asi que el asentamiento
+# rapido justifica bajar ESTE valor, pero NO ERROR_WINDOW: la mediana sigue
+# haciendo falta.
+#
+# Riesgo a vigilar en el CSV: `errorPercentage` es una ventana interna del
+# firmware de longitud desconocida. Si fuera mas larga que 30 s, las muestras
+# consecutivas saldrian correlacionadas y la mediana filtraria peor de lo que
+# supone el calculo. Se veria como siete lecturas casi identicas seguidas de un
+# salto brusco.
+ERROR_SETTLE: 3
+
+# Margen bajo TARGET_TEMP, en grados, que se exige para autorizar cualquier
+# SUBIDA. Con TARGET_TEMP 65 y este margen en 2.0, solo se sube por debajo de
+# 63 C. Evita el ciclo de subir porque cabe y bajar porque se pasa.
+TEMP_MARGIN: 1
+
+# Cada cuantas decisiones estables se reintenta una frecuencia que ya fallo.
+# Sin reintentar, el tuner se queda pegado abajo para siempre; reintentando muy
+# a menudo pasa mas tiempo por encima del objetivo. Medido sobre un chip
+# simulado con el ruido real, porcentaje de tiempo POR ENCIMA del 2 %:
+#     5 -> 20-28 %    10 -> 12-25 %    20 -> 12-15 %
+#    50 ->  6-10 %   100 ->  3-7 %   sin reintento -> 0 % pero pegado abajo
+# 50 elige el lado del cumplimiento, que es lo que se pide.
+ERROR_RETRY_CEILING: 50
+
+# =============================================================================
+# 6. COMPORTAMIENTO
+# =============================================================================
+
+# No tocar la configuracion de pools stratum del miner. Consecuencia: el miner
+# tampoco se reinicia al arrancar el tuner, porque el reinicio vive dentro de
+# la secuencia de stratum. Si algun dia quieres lo contrario, es mejor pasar
+# --manage-pools en esa ejecucion concreta que dejarlo en TRUE aqui.
+MANAGE_MINER_POOLS: FALSE
+
+# Metricas en JSON en http://<host>:8093/metrics. Sirve tambien para confirmar
+# de un vistazo que este perfil se cargo: la respuesta incluye los limites.
+# Devuelve {"endpoints": []} hasta la primera muestra del bucle.
+#
+# OJO: el endpoint escucha en TODAS las interfaces y NO tiene autenticacion.
+# Cualquiera en la misma red puede leer las metricas de operacion del miner
+# (hashrate, temperatura, potencia, MAC) y los limites de este perfil. Las
+# claves que identifican donde se mina o donde estan los ficheros del host
+# (PRIMARY_STRATUM, BACKUP_STRATUM, POOLS_FILE, USER_FILE, LOG_FILE,
+# SNAPSHOT_FILE) se filtran antes de publicarse, pero el resto no. No expongas
+# el puerto 8093 fuera de la LAN.
+METRICS_SERVE: TRUE
+
+# =============================================================================
+# 7. FICHEROS
+# =============================================================================
+
+# Historial de tuning y ultimo estado aplicado. En data/ para que un volumen
+# de docker los conserve al recrear el contenedor.
+#
+# NOMBRES DISTINTOS a los de safe-BM1370.yaml a proposito. Esta estrategia
+# escribe tres columnas mas (error_percent, error_target, estado), y la cabecera
+# del CSV solo se escribe cuando el fichero NO existe. Compartiendo fichero con
+# el perfil PID, las filas nuevas saldrian con 33 campos bajo una cabecera de
+# 30: comprobado, quedan desalineadas. Aparte, tener los dos historiales
+# separados es lo que permite comparar una estrategia con la otra.
+LOG_FILE: "data/bitaxepid_tuning_log_BM1370_estabilidad.csv"
+SNAPSHOT_FILE: "data/bitaxepid_snapshot_BM1370_estabilidad.json"
+
+# Lista de pools candidatos y credenciales. Son claves OBLIGATORIAS aunque
+# MANAGE_MINER_POOLS este en FALSE (validate_config las exige), asi que los
+# ficheros tienen que existir.
+POOLS_FILE: "pools.yaml"
+USER_FILE: "user.yaml"
+
+# =============================================================================
+# 8. STRATUM FIJO  (opcional — dejar comentado)
+# =============================================================================
+# Si se declaran AMBAS, el tuner usa estas dos en vez de medir latencias sobre
+# POOLS_FILE. Solo se leen cuando MANAGE_MINER_POOLS es TRUE.
+#
+# CUIDADO: con esto activado el tuner ESCRIBE la configuracion de pools en el
+# miner y lo reinicia. Dejalo comentado salvo que quieras exactamente eso.
+#
+# PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
+# BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"

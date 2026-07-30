@@ -94,6 +94,13 @@ class Logger:
                 "sample_interval",
                 "power_limit",
                 "hashrate_setpoint",
+                # Control por errores de hardware. Van AL FINAL y no en su sitio
+                # "logico" a proposito: anadir columnas al final deja los CSV
+                # antiguos legibles por la misma herramienta, mientras que
+                # insertarlas en medio desplaza todo lo demas.
+                "error_percent",
+                "error_target",
+                "estado",
             ]
             with open(self.log_file, "w", newline="") as f:
                 writer = csv.writer(f)
@@ -114,6 +121,9 @@ class Logger:
         core_voltage_actual: float,
         frequency: float,
         fanrpm: int,
+        error_percent: Any = None,
+        error_target: Any = None,
+        estado: Any = None,
     ) -> None:
         """
         Log miner performance data, including flattened PID settings and MAC address, to a CSV file.
@@ -132,6 +142,14 @@ class Logger:
             core_voltage_actual (float): Actual core voltage (mV).
             frequency (float): Actual frequency (MHz).
             fanrpm (int): Fan speed (RPM).
+            error_percent: Porcentaje de errores de hardware que reporta el
+                miner (errorPercentage). None si el miner no lo da o si la
+                estrategia en uso no lo consume.
+            error_target: Objetivo de errores configurado, para poder leer el
+                CSV sin tener delante el YAML con el que se genero.
+            estado: Estado de la maquina de estados de la estrategia de
+                estabilidad (RAMPA, BUSCAR_VOLTAJE, OPTIMIZAR). Es lo que
+                explica por que una muestra no movio nada.
         """
         with open(self.log_file, "a", newline="") as f:
             writer = csv.writer(f)
@@ -167,6 +185,9 @@ class Logger:
                     pid_settings.get("SAMPLE_INTERVAL", ""),
                     pid_settings.get("POWER_LIMIT", ""),
                     pid_settings.get("HASHRATE_SETPOINT", ""),
+                    "" if error_percent is None else error_percent,
+                    "" if error_target is None else error_target,
+                    "" if estado is None else estado,
                 ]
             )
 

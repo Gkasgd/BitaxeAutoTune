@@ -94,22 +94,38 @@ class BitaxeAPIClient:
             logger.error(f"Unexpected error fetching system info: {e}")
             return None
 
-    def set_settings(self, voltage: float, frequency: float) -> float:
+    def set_settings(self, voltage: float, frequency: float) -> bool:
         """
-        Set voltage and frequency on the miner and return the applied frequency.
+        Set voltage and frequency on the miner and report whether it took effect.
+
+        Devolvia la frecuencia PEDIDA, y la devolvia igual con un 200, con un
+        500 y con una excepcion: el valor de retorno no distinguia el exito del
+        fallo, asi que quien llamaba no tenia forma de saberlo. El bucle de
+        tuning daba entonces por aplicado un ajuste que el miner no tenia, y en
+        la muestra siguiente la discrepancia se interpretaba como un cambio
+        hecho por el usuario desde la web de AxeOS: un fallo de red acababa
+        tirando la ventana de errores medida y lo aprendido sobre techos.
+
+        El mismatch contra el miner tampoco se reportaba, solo se registraba
+        como warning; ahora cuenta como fallo, porque un ajuste que el miner no
+        adopto no esta aplicado por mucho que el PATCH respondiera 200.
 
         Args:
             voltage (float): Target core voltage to set (mV).
             frequency (float): Target frequency to set (MHz).
 
         Returns:
-            float: The frequency applied by the miner (MHz), returned unchanged if setting fails.
+            bool: True si el miner acepto el ajuste y lo confirma al releerlo;
+                False si la peticion fallo, si hubo excepcion o si el miner
+                quedo en otro valor. Cuando no se puede releer el estado se
+                concede el 200 como suficiente: la escritura se acepto, y
+                tratarlo como fallo dejaria al tuner sin poder actuar cada vez
+                que la relectura no llega.
 
         Example:
             >>> client = BitaxeAPIClient("192.168.1.1")
-            >>> applied_freq = client.set_settings(1200, 485)
-            >>> applied_freq
-            485.0
+            >>> client.set_settings(1200, 485)
+            True
         """
         settings = {"coreVoltage": voltage, "frequency": frequency}
         try:
@@ -136,12 +152,13 @@ class BitaxeAPIClient:
                             f"Settings mismatch - Requested: {voltage}mV/{frequency}MHz, "
                             f"Actual: {actual_voltage}mV/{actual_freq}MHz"
                         )
-                return frequency
+                        return False
+                return True
             logger.error(f"Failed to set settings: HTTP {response.status}")
-            return frequency
+            return False
         except Exception as e:
             logger.error(f"Error setting system settings: {e}")
-            return frequency
+            return False
 
     def set_stratum(self, primary: Dict[str, Any], backup: Dict[str, Any]) -> bool:
         """
