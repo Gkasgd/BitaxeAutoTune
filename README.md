@@ -24,6 +24,18 @@ Recomiendo dejar el FAN del ASIC en una velocidad fija, ya que el programa mismo
 por lo que el FAN del ASIC va a quedar al 100% si lo dejan en AUTO en la configuración de AxeOS.
 El programa corre en un servidor de Umbrel dentro de la misma red que la Bitaxe, ya que éste a demostrado su operatividad 24/7 durante años.
 
+
+cd ~/BitaxePID
+docker compose up -d --build
+para hacer guardar los cambios en la build
+______________________________
+docker compose down     # parar
+docker compose up -d    # arrancar
+docker compose logs -f  # ver qué hace (Ctrl+C solo sale del log)
+__________________________
+los cambios se hacen aquí
+nano ~/BitaxePID/SAFE-BM1370-estabilidad.yaml
+
 <img width="1876" height="939" alt="{B745F054-2446-4075-9851-5827AB933948}" src="https://github.com/user-attachments/assets/99db3717-d58b-4fbd-b69a-90a6f41bd97c" />
 
 Acepto cualquier donación, ya que realmente me está sirviendo este programa y gasté un par de sats en vibecodearlo, muchas gracias por leer hasta aqúi.
