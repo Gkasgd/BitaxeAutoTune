@@ -27,8 +27,8 @@ En la configuración se puede DESACTIVAR LA MEDICIÓN DE POOLS Y SU POSTERIOR CO
 
 ## USO
 cd ~/BitaxePID
-docker compose up -d --build
-para hacer guardar los cambios en la build
+BITAXEPID_MINER_IP=LA IP DE TU BITAXE docker compose up -d --build LA PRIMERA VEZ
+docker compose up -d --build SI HACES ALGUN CAMBIO
 ______________________________
 docker compose down     # parar
 docker compose up -d    # arrancar
