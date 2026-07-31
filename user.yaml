@@ -1,2 +1,26 @@
-stratumUser: bc1qx6uqjyddpyx6f0kw79d040geepqtyjef6at9ud.bitaxepid # if system api is blank load from file or commandline. no user no hashing.
-fallbackStratumUser: bc1qx6uqjyddpyx6f0kw79d040geepqtyjef6at9ud.bitaxepid # update as needed.
+# Direccion de pago para los pools stratum.
+#
+# ESTE FICHERO SOLO SE LEE EN UN CASO, y con la configuracion por defecto no se
+# lee nunca:
+#
+#   1. hay que arrancar con --manage-pools (o MANAGE_MINER_POOLS: TRUE), que por
+#      defecto esta desactivado: tuning_manager.py corta antes y respeta la
+#      configuracion stratum del miner, y
+#   2. el miner tiene que reportar stratumUser vacio en su API. Si ya tiene un
+#      usuario configurado desde AxeOS, ese gana y esto se ignora.
+#
+# Venia con una direccion del proyecto original (bc1qx6uq...), heredada del
+# upstream y NO del dueño de este fork. Estaba versionada y era la que se habria
+# enviado al miner en ese caso, o sea que el hashrate habria ido a un tercero.
+# Se deja vacia a proposito: es mejor que el programa no arranque que minar a una
+# direccion ajena sin avisar.
+#
+# Con los campos vacios y --manage-pools activo, el arranque termina con
+# "Stratum users missing" y no toca el miner. Para usarlo, pon tu propia
+# direccion; el sufijo despues del punto es el nombre del worker.
+# Hay que rellenar LAS DOS. El respaldo "si el fallback esta vacio usa el
+# primario" de tuning_manager.py no llega a actuar: es el defecto de un .get() y
+# _load_stratum_users siempre devuelve la clave, con "" cuando falta, asi que el
+# vacio gana y el arranque aborta igual.
+stratumUser: ""
+fallbackStratumUser: ""

@@ -18,6 +18,43 @@ snapshot.
 > see [Tuning strategies](#tuning-strategies). If you are looking for the
 > upstream PID behaviour, this is not it.
 
+## Quick start
+
+If this is your first run, **[EMPEZAR.md](EMPEZAR.md)** is the complete minimal
+guide, in Spanish: which files are actually required, how to check your chip is
+one of the four supported, and how to validate a profile before it writes
+voltage to hardware. What follows here is the condensed version.
+
+The container path, which is the tested one. From the repository root:
+
+```bash
+cp .env.example .env      # put your miner's IP in BITAXEPID_MINER_IP
+docker compose up -d --build
+docker compose logs -f
+```
+
+That is all. `BITAXEPID_CONFIG` already points at
+`perfiles/gamma-estabilidad.yaml`, the profile for a Bitaxe Gamma (BM1370) — if
+your miner is a different chip, change it before starting. Include the
+directory: profiles live in `perfiles/` and the factory limits in `chips/`. The log should say
+`Estrategia de estabilidad: objetivo 2.0% de errores de hardware`; if it says
+`Estrategia por limites` instead, the profile did not load.
+
+Without containers, in a virtual environment:
+
+```bash
+bash scripts/setup.sh
+bash scripts/start.sh 192.168.68.111
+```
+
+Both commands are run **from the repository root**: the tuner resolves
+`pools.yaml`, the CSV and the snapshot relative to the current directory, so
+running it from elsewhere writes those files elsewhere. (The scripts under
+`scripts/` are the exception — they `cd` to the root themselves.)
+
+[UMBREL.md](UMBREL.md) is the step-by-step version for an Umbrel node, in
+Spanish, with a real startup log and what to check.
+
 ### Note
 
 Upgrades may require updates to all files. You should either download the FULL
@@ -93,6 +130,12 @@ bash scripts/setup.sh
 The scripts under `scripts/` can be run from any directory; they resolve paths
 relative to the repository root.
 
+Both `scripts/setup.sh` and `scripts/start.sh` look for the virtual environment
+in `.venv/bin/activate` and `.venv/Scripts/activate`, whichever exists, so the
+same commands work on Linux, macOS and on Windows under Git Bash — uv creates
+`Scripts/` there, not `bin/`. If neither is found, the error names both paths it
+searched.
+
 ## Containers
 
 ### docker compose
@@ -111,7 +154,7 @@ Spanish: what the startup log should look like, how to check the limits are
 actually in place, and what is verified and what is not.
 
 `docker compose down` stops it. The default profile is
-`safe-BM1370-estabilidad.yaml` (stability strategy, see below); change
+`perfiles/gamma-estabilidad.yaml` (stability strategy, see below); change
 `BITAXEPID_CONFIG` in `.env` for a different one. Unsetting it is a bad idea: you
 get the factory limits of whichever chip the miner reports, with `ERROR_TUNING`
 undeclared and therefore the other strategy.
@@ -124,6 +167,13 @@ The container talks to the miner over HTTP on the LAN through the default bridge
 network: it needs no extra privileges and no host networking. It also means it
 cannot discover the miner by mDNS, so give the miner a fixed address — a DHCP
 reservation in your router is enough.
+
+**`.env` is for `docker compose` only.** Its three variables are interpolated by
+compose into the container's `command` and `ports` — nothing in the Python code
+reads the environment. Running `python bitaxepid.py` directly ignores `.env`
+entirely; use `--ip`, `--config` and `--serve-metrics` instead. `smoke_test.sh`
+fails if the compose file interpolates a variable that `.env.example` does not
+declare, so a new variable cannot ship without its template entry.
 
 ### podman
 
@@ -147,24 +197,57 @@ a warning rather than being applied silently.
 `TARGET_TEMP` is not a limit but a setpoint: above it, the tuner lowers
 frequency first and then voltage, one step per sample.
 
-`safe-BM1370.yaml` is a conservative profile for the Bitaxe Gamma, meant to be
-passed with `--config` on top of `BM1370.yaml`:
+Two ready-made profiles ship for the Bitaxe Gamma (BM1370), in `perfiles/`. Both
+are passed with `--config` on top of `chips/BM1370.yaml`.
+
+The split is the point: `chips/` holds the four factory YAML files, one per ASIC,
+which you should not edit — raising a maximum there raises it for every profile
+that does not declare it. `perfiles/` holds what you do edit. Each directory has
+its own `LEEME.md`, in Spanish.
+
+### `perfiles/gamma-estabilidad.yaml` — the default, and the recommended one
 
 ```bash
-python bitaxepid.py --ip 192.168.68.111 --config safe-BM1370.yaml
+python bitaxepid.py --ip 192.168.68.111 --config perfiles/gamma-estabilidad.yaml
 ```
 
-It caps frequency at 500 MHz (factory 625) and voltage at 1150 mV (factory 1250),
-targets 55 °C, and declares **all four** bounds rather than only the two maxima.
-That matters: every key a profile does not declare is inherited from the chip
-YAML, so declaring only the ceilings left the floors at the factory 1000 mV /
-400 MHz — an effective range of 1000-1150 mV in a profile called "safe". The floor
-is where the minimum-voltage search and the thermal branch bottom out, and a
-BM1370 does not mine stably at 1000 mV.
+This is what `docker compose` loads, and the only profile tested on real
+hardware. It runs the stability strategy (`ERROR_TUNING: TRUE`): 60 °C target,
+1180-1210 mV, 475-925 MHz, and a 2 % hardware-error target that the tuner uses to
+find the lowest voltage the chip holds.
 
-`safe-BM1370-estabilidad.yaml` is the other profile, and the default for
-`docker compose`: it declares all 32 readable keys explicitly (inheriting
-nothing), runs the stability strategy, and is the one tested on real hardware.
+It declares **all 32 readable keys explicitly**, inheriting nothing from
+`chips/BM1370.yaml`, so one file tells you everything the run will use. The 925 MHz
+ceiling is a bound, not a goal — in practice temperature stops the ramp long
+before it, which is the point of having a target temperature.
+
+[UMBREL.md](UMBREL.md) documents this profile in detail, in Spanish, with a real
+log of the three states.
+
+### `perfiles/gamma-conservador.yaml` — the conservative alternative
+
+```bash
+python bitaxepid.py --ip 192.168.68.111 --config perfiles/gamma-conservador.yaml
+```
+
+Uses the **other** strategy (`ERROR_TUNING` undeclared, so decisions come from
+temperature and power only): 55 °C, 1100-1150 mV, 425-500 MHz, starting at
+1100 mV / 450 MHz. Not tested on hardware. Pick it only if you have a reason to
+prefer limit-based tuning; otherwise use the profile above.
+
+Like the other one, it now declares **every key it uses** — 24 of them —
+inheriting nothing. It used to declare only the two ceilings, which left the
+floors at the factory 1000 mV / 400 MHz: an effective range of 1000-1150 mV in a
+file called "safe". The floor is where the minimum-voltage search and the thermal
+branch bottom out, and a BM1370 does not mine stably at 1000 mV. Two of the ten
+keys it inherited were not inert either — `VOLTAGE_STEP` and `FREQUENCY_STEP`
+decide how far the tuner moves per sample, so editing a factory YAML changed this
+profile's behaviour without touching it.
+
+`tests/test_claves_config.py` enforces this for any file in `perfiles/`, not just
+these two: every profile must declare the six hard limits.
+
+### If the profile is missing
 
 A profile passed with `--config` must exist and must be readable: the program
 exits rather than falling back to the chip defaults, because silently running
@@ -184,14 +267,39 @@ Or, with the uv virtual environment created by `scripts/setup.sh`:
 bash scripts/start.sh 192.168.68.111
 ```
 
+### Validating a profile without a miner
+
+```bash
+python bitaxepid.py --dry-run --asic BM1370 --config perfiles/gamma-estabilidad.yaml
+```
+
+`--dry-run` loads both YAML layers, merges and validates them, prints the
+effective value of every key **together with the file it came from**, and exits
+0 — without opening a single connection. An invalid configuration exits 1.
+
+`--asic` is required here, and only here: the chip model is normally read from
+the miner's `ASICModel`, and there is no miner to ask. Guessing a default would
+be worse than refusing — it would validate your profile against another chip's
+limits and report success.
+
+This is the way to see the two-layer inheritance. A profile that lowers
+`MAX_VOLTAGE` but leaves `MIN_VOLTAGE` undeclared keeps the factory minimum, so
+its effective range is not the one its filename suggests. The same information
+goes to the log at INFO on every normal start:
+
+```text
+INFO - 14 claves declaradas en perfiles/mi-perfil.yaml; 10 heredadas de chips/BM1370.yaml: FREQUENCY_STEP, PID_FREQ_KD, ...
+```
+
 Full option list:
 
 ```text
-usage: bitaxepid.py [-h] [--version] --ip IP [--config CONFIG] [--user-file USER_FILE] [--pools-file POOLS_FILE]
-                    [--primary-stratum PRIMARY_STRATUM] [--backup-stratum BACKUP_STRATUM]
-                    [--stratum-user STRATUM_USER] [--fallback-stratum-user FALLBACK_STRATUM_USER] [--voltage VOLTAGE]
-                    [--frequency FREQUENCY] [--sample-interval SAMPLE_INTERVAL] [--log-to-console]
-                    [--logging-level {info,debug}] [--serve-metrics] [--manage-pools]
+usage: bitaxepid.py [-h] [--version] [--ip IP] [--dry-run] [--asic {BM1366,BM1368,BM1370,BM1397}] [--config CONFIG]
+                    [--user-file USER_FILE] [--pools-file POOLS_FILE] [--primary-stratum PRIMARY_STRATUM]
+                    [--backup-stratum BACKUP_STRATUM] [--stratum-user STRATUM_USER]
+                    [--fallback-stratum-user FALLBACK_STRATUM_USER] [--voltage VOLTAGE] [--frequency FREQUENCY]
+                    [--sample-interval SAMPLE_INTERVAL] [--log-to-console] [--logging-level {info,debug}]
+                    [--serve-metrics] [--manage-pools]
 
 BitaxePID Auto-Tuner
 
@@ -199,6 +307,12 @@ options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
   --ip IP               IP address of the Bitaxe miner
+  --dry-run             Cargar y validar la configuracion, imprimirla con el fichero del que sale cada clave, y
+                        salir sin conectar con ningun miner. Necesita --asic, porque el modelo se lee del miner y
+                        aqui no se consulta
+  --asic {BM1366,BM1368,BM1370,BM1397}
+                        Modelo de ASIC para --dry-run. En una ejecucion normal no se usa: el modelo lo reporta el
+                        propio miner
   --config CONFIG       Path to optional user YAML configuration file
   --user-file USER_FILE
                         Path to user YAML file (default: from config)
@@ -256,11 +370,29 @@ Two consequences worth knowing before you enable it:
 Explicit endpoints (`--primary-stratum`, `PRIMARY_STRATUM` in the config) also
 require `--manage-pools`: without it they are stored but never applied.
 
+### The payout address in `user.yaml`
+
+`user.yaml` ships **empty**, on purpose. It is read only when two things hold at
+once: pool management is enabled, *and* the miner reports an empty `stratumUser`
+over its API. Anything already configured in AxeOS wins over the file.
+
+It used to carry the upstream project's own address
+(`bc1qx6uq…bitaxepid`) — identical to the one in the parent repository, so not
+the fork owner's. In that narrow case the hashrate would have gone to a third
+party with nothing in the log to say so. With the keys empty, that path now ends
+in `Stratum users missing` and the miner is left untouched, which is the right
+outcome: without a user the miner does not mine either way.
+
+To use pool management, put **both** keys in `user.yaml` (the fallback does not
+default to the primary — see the comment in the file), or set the user in AxeOS,
+or pass `--stratum-user`.
+
 ## Configuration notes
 
-Default settings come from the ASIC model YAML file (`BM1366.yaml`,
-`BM1368.yaml`, `BM1370.yaml`, `BM1397.yaml`). If `--config` is provided, its
-keys override the model defaults. Command-line options such as `--voltage`,
+Default settings come from the ASIC model YAML file in `chips/` — `BM1366.yaml`,
+`BM1368.yaml`, `BM1370.yaml`, `BM1397.yaml`. The program picks one from the
+`ASICModel` the miner reports and cannot be told which (`ruta_yaml_de_chip` in
+`config.py`). If `--config` is provided, its keys override the model defaults. Command-line options such as `--voltage`,
 `--frequency` and `--sample-interval` override both.
 
 The following 14 keys are mandatory; the program exits if any is missing:
@@ -280,10 +412,10 @@ key you did not declare and the value it will use instead. `ERROR_TUNING` gets a
 warning of its own, because its default is `FALSE` — that is not a nuance, it is
 the *other strategy*.
 
-### Example configuration file (`BM1366.yaml`)
+### Example configuration file (`chips/BM1366.yaml`)
 
 ```yaml
-# BM1366.yaml
+# chips/BM1366.yaml
 INITIAL_FREQUENCY: 485       # "485 (default)" from BM1366DropdownFrequency
 MIN_FREQUENCY: 400           # lowest available frequency in BM1366DropdownFrequency
 MAX_FREQUENCY: 575           # highest available frequency in BM1366DropdownFrequency
@@ -429,14 +561,14 @@ unimported — the `Containerfile` installs that file verbatim, so a stale entry
 ships a package that never runs) and then runs the unit tests. Checks that need
 third-party packages are skipped, not failed, when those packages are absent.
 
+```bash
+bash scripts/smoke_test.sh
+```
+
 On Windows, where the interpreter is `python` rather than `python3`:
 
 ```bash
 PYTHON=python bash scripts/smoke_test.sh
-```
-
-```bash
-bash scripts/smoke_test.sh
 ```
 
 ## Credits

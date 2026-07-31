@@ -1,25 +1,13 @@
 # BitaxePID en Umbrel, con límites seguros
 
 Objetivo: dejar el tuner corriendo en el Umbrel apuntando a tu Bitaxe Gamma
-(BM1370), sin pasar nunca de **55 °C de objetivo, 500 MHz y 1150 mV**.
+(BM1370) con el perfil por defecto, `perfiles/gamma-estabilidad.yaml`: **60 °C de
+objetivo, 1180-1210 mV y 475-925 MHz**, buscando el voltaje mínimo que mantenga
+los errores de hardware por debajo del **2 %**.
 
 Antes de nada, lo importante: **nada de esto se ha probado en tu miner ni en tu
-Umbrel.** Lo he verificado contra un miner simulado y sin poder construir la
-imagen del contenedor (el entorno donde lo preparé no tiene Docker ni red). Al
-final hay una lista de qué está comprobado y qué no.
-
-> **Aviso: este documento describe `safe-BM1370.yaml`, que ya no es el perfil por
-> defecto.** Hoy `docker-compose.yml` y `.env.example` cargan
-> `safe-BM1370-estabilidad.yaml`, que es otra cosa: estrategia de estabilidad
-> (`ERROR_TUNING: TRUE`, decide con temperatura y errores de hardware y busca el
-> voltaje mínimo que aguanta), límites 1180-1210 mV / 475-925 MHz y 60 °C de
-> objetivo. Es el recomendado y el único probado en hardware real.
->
-> Todo lo de aquí sigue siendo cierto **si pasas `--config safe-BM1370.yaml`**, o
-> pones ese valor en `BITAXEPID_CONFIG`. Los números concretos que verás abajo
-> (55 °C, 500 MHz, 1150 mV, arranque en 1100/450) son los de ese perfil, no los
-> del default actual. Los pasos de puesta en marcha, la comprobación de límites
-> por `:8093/metrics` y la sección de problemas valen para los dos.
+Umbrel.** Lo verificado está medido contra un miner simulado, sin construir la
+imagen del contenedor. Al final hay una lista de qué está comprobado y qué no.
 
 ## Antes de empezar
 
@@ -32,47 +20,180 @@ usuario es `umbrel`.
 
 ## Puesta en marcha
 
-Desde tu máquina, con el fork ya empujado a GitHub:
+Por SSH al Umbrel:
 
 ```bash
 ssh umbrel@<ip-del-umbrel>
 
-git clone https://github.com/<tu-usuario>/BitaxePID.git
-cd BitaxePID
+git clone https://github.com/Gkasgd/BitaxeAutoTune.git
+cd BitaxeAutoTune
 
 cp .env.example .env
 nano .env          # pon la IP de tu miner en BITAXEPID_MINER_IP
-                   # y, para seguir este documento, BITAXEPID_CONFIG=safe-BM1370.yaml
 
 docker compose up -d --build
 docker compose logs -f
 ```
 
-Si dejas `BITAXEPID_CONFIG` como viene, cargará el perfil de estabilidad y el log
-de arranque no será el de abajo: verás `1185mV / 475MHz` en vez de
-`1100mV / 450MHz`, y líneas de estado `RAMPA:` que esta estrategia no tiene.
+`BITAXEPID_CONFIG` ya viene con `perfiles/gamma-estabilidad.yaml`, así que no hay
+que tocarlo. Incluye el directorio: los perfiles viven en `perfiles/` y los
+límites de fábrica en `chips/`, y la ruta es la que ve el programa dentro del
+contenedor. Dejarlo **vacío** sí es mala idea: entonces manda el YAML de fábrica
+del chip que reporte el miner, con `ERROR_TUNING` sin declarar y por tanto la
+*otra* estrategia.
+
+Si vienes de una instalación anterior, tu `.env` apunta al nombre viejo
+(`safe-BM1370-estabilidad.yaml`) y hay que editarlo: un `--config` que no existe
+aborta el arranque en lugar de seguir con los límites de fábrica.
 
 En el log tienen que aparecer, en este orden:
 
 ```
 INFO - Initialized BitaxeAPIClient for <ip> with timeout=10s, retries=5, pool_maxsize=10
-INFO - Gestion de pools desactivada: se respeta la configuracion stratum del miner.
-INFO - Initializing hardware: Voltage=1100mV, Frequency=450MHz
-INFO - Applied settings: Voltage=1100mV, Frequency=450MHz
+INFO - 32 claves, todas declaradas en perfiles/gamma-estabilidad.yaml: no se hereda nada de chips/BM1370.yaml
+INFO - Estrategia de estabilidad: objetivo 2.0% de errores de hardware, temperatura objetivo 60.0C. El hashrate no interviene en las decisiones.
+INFO - Gestion de pools desactivada: se respeta la configuracion stratum del miner. Usa --manage-pools o MANAGE_MINER_POOLS para permitir que BitaxePID la cambie.
+INFO - Initializing hardware: Voltage=1185mV, Frequency=475MHz
+INFO - Applied settings: Voltage=1185mV, Frequency=475MHz
 INFO - Metrics server started on http://0.0.0.0:8093/metrics
 INFO - Starting BitaxePID tuner...
 INFO - Starting BitaxePID tuner...
 ```
 
-Arranca en 1100 mV / 450 MHz, por debajo de los topes, y sube desde ahí. Si ves
-`Voltage=1150mV, Frequency=550MHz` es que **no** se cargó el perfil seguro: son
-los valores de fábrica del BM1370.
+La línea de `Estrategia de estabilidad` es la que confirma que se cargó el perfil
+correcto: si dice `Estrategia por limites`, el `--config` no llegó y estás con la
+otra estrategia.
+
+La de las 32 claves dice de dónde sale cada valor. Con este perfil no se hereda
+nada, así que basta leer un fichero. Con otro que declare menos verás en su lugar
+algo como `14 claves declaradas en X; 10 heredadas de chips/BM1370.yaml: ...`, y
+esas 10 salen de los límites de fábrica, no de tu perfil.
+
+## Validar un perfil sin encender el miner
+
+Antes de subir un cambio al nodo puedes comprobarlo en seco, sin conexión de
+ninguna clase:
+
+```bash
+python bitaxepid.py --dry-run --asic BM1370 --config perfiles/gamma-estabilidad.yaml
+```
+
+Carga los dos YAML, los fusiona, los valida y saca una tabla con el valor
+efectivo de cada clave y **el fichero del que viene**, más las opcionales que
+no declara nadie y quedan en el defecto del programa. Termina con código 0 si
+la configuración es válida y 1 si no. Hay que pasarle `--asic` porque el modelo
+de chip lo reporta el propio miner, y aquí no se le pregunta a ninguno.
+
+Detecta lo que de verdad falla en la práctica: límites invertidos, un `--config`
+que no existe, y sobre todo un perfil que baja `MAX_VOLTAGE` pero se deja
+`MIN_VOLTAGE` heredado, es decir, un rango efectivo que no es el que el nombre
+del fichero promete. No comprueba nada del miner ni del contenedor.
+
+Arranca en **1185 mV / 475 MHz**, el suelo del perfil, y sube desde ahí. Si ves
+`Voltage=1150mV, Frequency=550MHz` es que se están usando los valores de fábrica
+del BM1370.
 
 ("Starting BitaxePID tuner" sale dos veces: está en `main()` y otra vez dentro
 de `start_tuning()`. Es cosmético, viene del código original y no lo he tocado.)
 
 `Ctrl+C` sale del log sin parar el contenedor. Para pararlo de verdad:
 `docker compose down`.
+
+## Qué va a hacer el tuner
+
+Esta estrategia es una máquina de tres estados, y cada transición se anuncia. Lo
+que sigue es una corrida real contra el miner simulado, recortada.
+
+**1. RAMPA** — pone el voltaje en el máximo de una vez y luego sube frecuencia de
+5 en 5 MHz por muestra:
+
+```
+RAMPA: voltaje al maximo 1210mV antes de subir frecuencia (temp 49.6C)
+RAMPA: subiendo frecuencia a 480MHz (temp 49.85C, 1210mV, techo 925MHz)
+...
+Estado RAMPA -> BUSCAR_VOLTAJE: a 58.1C ya no hay margen bajo 60.0C (margen 2.0C)
+```
+
+Fíjate en que la rampa **no llega a los 925 MHz** del techo: la para la
+temperatura, y con `TEMP_MARGIN: 2.0` la para 2 °C antes del objetivo. Los
+925 MHz son un tope, no una meta.
+
+**2. BUSCAR_VOLTAJE** — baja voltaje de 5 en 5 mV hasta que los errores tocan el
+2 %, y entonces vuelve al último que cumplía:
+
+```
+BUSCAR_VOLTAJE: midiendo (1/7 muestras)
+BUSCAR_VOLTAJE: errores 0.00% <= 2.0%, bajando voltaje a 1205mV
+...
+Estado BUSCAR_VOLTAJE -> OPTIMIZAR: errores 2.91% > 2.0%, volviendo a 1200mV (ultimo voltaje que cumplia)
+```
+
+Las líneas `midiendo (n/7 muestras)` no son relleno: decide con la **mediana** de
+`ERROR_WINDOW: 7` muestras, porque el `errorPercentage` del miner es ruidoso y
+una sola lectura cruza cualquier umbral en las dos direcciones. Con
+`SAMPLE_INTERVAL: 30` eso son tres minutos y medio por decisión.
+
+**3. OPTIMIZAR** — régimen permanente. Errores por encima del objetivo suben
+voltaje; margen térmico sobrante sube frecuencia:
+
+```
+OPTIMIZAR: midiendo (3/7 muestras) en 1200mV/640MHz
+OPTIMIZAR: errores 0.66% con margen, subiendo frecuencia a 645MHz
+```
+
+Cuando ya no queda nada por mover, cada muestra lo dice:
+
+```
+Estable en 1200mV/640MHz: errores 1.70% contra objetivo 2.0% (banda 1.50-2.0%), 59.0C
+```
+
+Ver `Estable en` repetido es la señal de que encontró su punto. No es un estado
+final: pasadas `ERROR_RETRY_CEILING: 50` decisiones estables olvida la frecuencia
+que le falló y la vuelve a intentar, por si mejoraron las condiciones — más
+ventilación, menos calor en la habitación:
+
+```
+Estable 51 decisiones: reintentando la frecuencia 645MHz, que fallo antes
+```
+
+El suelo de voltaje se reintenta al doble de decisiones, con la misma forma de
+línea. Es deliberado: recuperar frecuencia da hashrate, y bajar voltaje solo
+ahorra unos milivatios.
+
+**Cuando se pasa de temperatura, lo que baja es la frecuencia**, no el voltaje:
+
+```
+Bajando frecuencia a 635MHz por temperatura 60.5C > 60.0C (errores 0.66% contra objetivo 2.0%)
+```
+
+El voltaje solo se toca por calor cuando la frecuencia ya está en
+`MIN_FREQUENCY`, y entonces lo dice explícitamente. El orden es deliberado:
+bajar voltaje sube los errores, así que responder al calor quitando voltaje
+empeora la estabilidad justo cuando el chip va más forzado.
+
+Estas líneas de decisión **no llevan marca de tiempo**: van por stdout
+(`console.print` de `rich`) y no por el logger. Están en castellano.
+
+Si vas a buscarlas con `grep`, hazlo por el trozo **anterior al primer número**:
+el texto lleva valores interpolados en medio, así que una frase entera copiada de
+aquí puede no encontrar nada. `grep "Bajando frecuencia"` funciona;
+`grep "Bajando frecuencia a 635MHz"` depende de que ese sea justo el valor de esa
+muestra.
+
+Los topes son duros en los dos caminos que escriben al hardware: el valor
+inicial y cada propuesta del bucle. Si pides algo fuera de rango, lo recorta y lo
+dice:
+
+```
+WARNING - INITIAL_VOLTAGE=1250.0mV esta fuera del rango 1180-1210mV
+          (MIN_VOLTAGE/MAX_VOLTAGE): se usara 1210mV
+```
+
+**No toca la configuración de pools de tu miner** y no lo reinicia al arrancar.
+Si algún día quieres lo contrario, añade `--manage-pools` al `command` del
+compose; es mejor eso que dejarlo activado en un fichero. Ojo: entonces entra en
+juego `user.yaml`, que viene **vacío a propósito** y hará que el arranque termine
+en `Stratum users missing` hasta que pongas tu dirección de pago.
 
 ## Comprobar que los límites están puestos
 
@@ -82,78 +203,70 @@ La forma rápida, desde cualquier navegador de tu red:
 http://<ip-del-umbrel>:8093/metrics
 ```
 
-Los primeros segundos devuelve `{"endpoints": []}`: la lista se rellena con la
-primera muestra del bucle, no al arrancar. Espera un `SAMPLE_INTERVAL` y vuelve
-a mirar. Dentro de `pid_settings` tienen que estar tus tres números:
+Los primeros segundos devuelve exactamente `{"endpoints": []}`: la lista se
+rellena con la primera muestra del bucle, no al arrancar. Espera un
+`SAMPLE_INTERVAL` y vuelve a mirar. Dentro de `pid_settings` tienen que estar tus
+números:
 
 ```json
-"MAX_VOLTAGE": 1150, "MAX_FREQUENCY": 500, "TARGET_TEMP": 55.0
+"MIN_VOLTAGE": 1180, "MAX_VOLTAGE": 1210,
+"MIN_FREQUENCY": 475, "MAX_FREQUENCY": 925,
+"TARGET_TEMP": 60.0, "ERROR_TUNING": true, "ERROR_TARGET_PERCENT": 2.0
 ```
 
-Si ahí ves `1250` y `625`, el perfil no se aplicó. Ojo: sirve JSON, no el
-formato de Prometheus, así que Prometheus no lo puede raspar directamente
-(el README original decía lo contrario; está corregido).
+Si ahí ves `1250` y `625`, el perfil no se aplicó. Junto a `pid_settings`, cada
+muestra trae además `"estado": "RAMPA"` (o `BUSCAR_VOLTAJE`, u `OPTIMIZAR`),
+`error_percent` y `error_target`, que es la forma de ver en qué fase va sin leer
+el log.
 
-El historial de tuning queda en `~/BitaxePID/data/`, que sobrevive a
+Ojo: sirve JSON, no el formato de Prometheus, así que Prometheus no lo puede
+raspar directamente.
+
+En `pid_settings` también aparecen `HASHRATE_SETPOINT` y las seis ganancias
+`PID_*`. **No se leen**: se publican porque el volcado incluye la configuración
+entera. No hay ningún PID en este programa.
+
+El historial de tuning queda en `data/` dentro del clon, que sobrevive a
 `docker compose down`.
-
-## Qué va a hacer el tuner
-
-Sube voltaje y frecuencia mientras haya margen, y en cuanto la temperatura pasa
-de 55 °C baja **primero frecuencia y luego voltaje**, un paso por muestra (25 MHz
-y 10 mV). Muestrea cada 60 segundos, así que reacciona en minutos, no en
-segundos.
-
-Cada decisión sale en el log, pero sin marca de tiempo: esas líneas van por
-stdout (`console.print` de `rich`) y no por el logger. Están **en castellano**:
-`Bajando frecuencia a 475MHz por temperatura...`, `Subiendo voltaje a 1150mV por
-errores...`, `Estable en 1100mV/500MHz`. Ver `Estable en` repetido es la señal de
-que ha encontrado su punto.
-
-Si vas a buscarlas con `grep`, hazlo por el trozo **anterior al primer número**:
-el texto lleva valores interpolados en medio, así que una frase entera copiada de
-aquí puede no encontrar nada. `grep "Bajando frecuencia"` funciona;
-`grep "Bajando frecuencia a 475MHz por temperatura"` depende de que ese sea justo
-el valor de esa muestra.
-
-Los topes son duros en los dos caminos que escriben al hardware: el valor
-inicial y cada propuesta del bucle. Si pides algo fuera de rango, lo recorta y lo
-dice:
-
-```
-WARNING - INITIAL_VOLTAGE=1250.0mV esta fuera del rango 1000-1150mV
-          (MIN_VOLTAGE/MAX_VOLTAGE): se usara 1150mV
-```
-
-**No toca la configuración de pools de tu miner** y no lo reinicia al arrancar.
-Si algún día quieres lo contrario, añade `--manage-pools` al `command` del
-compose; es mejor eso que dejarlo activado en un fichero.
 
 ## Ajustar el perfil
 
-Todo está en `safe-BM1370.yaml`, con un comentario por clave explicando el por
-qué. Los que probablemente querrás tocar:
+Todo está en `perfiles/gamma-estabilidad.yaml`, con un comentario por clave
+explicando el por qué. Declara **las 32 claves legibles** de forma explícita, sin
+heredar nada de `chips/BM1370.yaml`, para que leyendo un solo fichero sepas con
+qué corre. Los que probablemente querrás tocar:
 
 | Clave | Valor | Para qué |
 |---|---|---|
-| `TARGET_TEMP` | 55.0 | Temperatura objetivo |
-| `MAX_FREQUENCY` | 500 | Tope de frecuencia |
-| `MAX_VOLTAGE` | 1150 | Tope de voltaje |
-| `MIN_FREQUENCY` | 425 | Suelo: hasta dónde baja la rama térmica |
-| `MIN_VOLTAGE` | 1100 | Suelo del voltaje |
-| `SAMPLE_INTERVAL` | 60 | Segundos entre muestras |
-| `POWER_LIMIT` | 13.0 | Actúa alrededor de 14 W (se compara contra `POWER_LIMIT * 1.075`) |
-
-Los **cuatro** extremos están declarados en el perfil a propósito. Todo lo que no
-declare se hereda de `BM1370.yaml`, o sea de fábrica, y eso incluía los suelos:
-antes este perfil solo bajaba los máximos y su rango efectivo era 1000-1150 mV,
-que no es lo que promete un perfil llamado «safe».
-
-`HASHRATE_SETPOINT` sigue en el fichero pero **no se lee**. Ninguna de las dos
-estrategias mira el hashrate: es un resultado de la frecuencia y el voltaje, no un
-objetivo. Solo rellena una columna del CSV; cambiarlo no tiene ningún efecto.
+| `TARGET_TEMP` | 60.0 | Temperatura objetivo: para la rampa y dispara la bajada |
+| `ERROR_TARGET_PERCENT` | 2.0 | Errores de hardware que se aceptan. Es el criterio central |
+| `MAX_VOLTAGE` | 1210 | Tope de voltaje, y donde RAMPA lo pone de entrada |
+| `MIN_VOLTAGE` | 1180 | Suelo del voltaje |
+| `MAX_FREQUENCY` | 925 | Tope de frecuencia (la temperatura para la rampa mucho antes) |
+| `MIN_FREQUENCY` | 475 | Suelo: hasta dónde baja la rama térmica |
+| `SAMPLE_INTERVAL` | 30 | Segundos entre muestras |
+| `ERROR_WINDOW` | 7 | Muestras de la mediana. Súbelo si las decisiones te parecen nerviosas |
+| `TEMP_MARGIN` | 2.0 | Margen que exige para subir, y evita el sube-baja de un paso |
+| `POWER_LIMIT` | 30.0 | Actúa alrededor de 32 W (se compara contra `POWER_LIMIT * 1.075`) |
 
 Después de editar: `docker compose restart`.
+
+### El otro perfil, `perfiles/gamma-conservador.yaml`
+
+Es la alternativa conservadora, y usa la **otra** estrategia (`ERROR_TUNING` sin
+declarar, decide solo con temperatura y potencia): 55 °C, 1100-1150 mV,
+425-500 MHz, arranque en 1100 mV / 450 MHz, muestras de 60 s. Se pasa con:
+
+```bash
+docker compose down
+# BITAXEPID_CONFIG=perfiles/gamma-conservador.yaml en .env
+docker compose up -d
+```
+
+Con él no verás ninguna línea `RAMPA:` ni `BUSCAR_VOLTAJE:`, porque esos estados
+no existen en esa estrategia; el arranque dirá `Estrategia por limites`. No está
+probado en hardware real. Si no tienes un motivo concreto para elegirlo, quédate
+con el de estabilidad.
 
 ## Si algo va mal
 
@@ -161,20 +274,33 @@ Después de editar: `docker compose restart`.
 probable es la IP: si el miner no responde, el programa registra
 `Failed to fetch system info from API` y termina, y `restart: unless-stopped` lo
 vuelve a levantar. No falla rápido — el cliente HTTP hace 5 reintentos con
-backoff, así que verás medio minuto de `Retrying (Retry(total=...))` con
-`Connection refused` antes de que se rinda. Comprueba con
-`curl http://<ip-del-miner>/api/system/info` desde el propio Umbrel.
+backoff, así que verás medio minuto de `Retrying (Retry(total=...))` antes de que
+se rinda. Comprueba con `curl http://<ip-del-miner>/api/system/info` desde el
+propio Umbrel.
 
-**`User config file safe-BM1370.yaml not found`.** El perfil no llegó al
-contenedor. Reconstruye con `docker compose up -d --build`. Este error es
-deliberado: antes se ignoraba en silencio y el miner acababa corriendo con los
-límites de fábrica creyendo que estaba limitado.
+**`User config file perfiles/gamma-estabilidad.yaml not found`.** El perfil no
+llegó al contenedor, o `BITAXEPID_CONFIG` en tu `.env` sigue con el nombre viejo
+sin el directorio. Comprueba el `.env` y reconstruye con
+`docker compose up -d --build`. Este error es deliberado: antes se ignoraba en
+silencio y el miner acababa corriendo con los límites de fábrica creyendo que
+estaba limitado.
+
+**`ASIC model YAML file chips/BM1370.yaml not found`.** Es distinto del anterior:
+falta el YAML de fábrica, no tu perfil. En una imagen recién construida significa
+que al `Containerfile` le faltan los `COPY chips/` y `COPY perfiles/` — los
+comodines de `COPY *.yaml` no bajan a subdirectorios, así que sin esas dos líneas
+la imagen sale sin ninguna configuración.
+
+**`errorPercentage ausente en la respuesta del miner`.** Esta estrategia se queda
+sin su señal principal: no sale de RAMPA y solo actuarán temperatura y potencia.
+Lo dice en el log con esas palabras. Es cosa del firmware del miner; mira si
+AxeOS está actualizado.
 
 **El puerto 8093 está ocupado** (Umbrel corre bastantes cosas). Cambia
 `BITAXEPID_METRICS_PORT` en `.env` y `docker compose up -d`.
 
-**Temperaturas por encima de 55 °C y no bajan.** Mira si la frecuencia está ya
-en `MIN_FREQUENCY` (425) y el voltaje en `MIN_VOLTAGE` (1100): si el tuner llegó
+**Temperaturas por encima de 60 °C y no bajan.** Mira si la frecuencia está ya
+en `MIN_FREQUENCY` (475) y el voltaje en `MIN_VOLTAGE` (1180): si el tuner llegó
 al suelo y sigue caliente, el problema es de refrigeración, no de configuración.
 Ningún ajuste de software lo arregla.
 
@@ -187,36 +313,33 @@ fábrica.
 Verificado contra un miner simulado que responde como la API real, con
 `ASICModel=BM1370` para que se cargue el YAML correcto:
 
-- Seis escenarios (normal, caliente, arranque en el tope, arranque fuera de
-  rango, con métricas, y con un setpoint inalcanzable). En ninguno se aplica un
-  valor por encima de 1150 mV o 500 MHz; el máximo aplicado es exactamente
-  1150 mV / 500 MHz.
-- El caso peligroso: pidiendo `--voltage 1250 --frequency 625`, al miner llegan
-  1150 mV / 500 MHz, con el aviso en el log.
-- La medida diferencial que demuestra que los arreglos hacen falta: el código de
-  antes manda **1155 mV** al miner con el tope en 1150; el de ahora manda 1150.
-- A 70 °C simulados el tuner baja frecuencia de 450 a 400 y voltaje de 1100 a
-  1060, sin pasarse del mínimo.
-- El comando exacto que genera el compose, ejecutado tal cual: crea `data/`,
-  escribe el CSV ahí y nada en la raíz, y sirve métricas en 8093 (comprobado con
-  una petición HTTP real).
-- 71 tests unitarios y el smoke test del proyecto: 61 ok, 0 fallos.
+- **El log de arranque de arriba está copiado de una corrida real**, no escrito a
+  mano, igual que las líneas de los tres estados y las dos transiciones.
+- La máquina de estados recorre RAMPA → BUSCAR_VOLTAJE → OPTIMIZAR y las
+  transiciones salen con su motivo. La rampa la para la temperatura a 58,1 °C,
+  muy por debajo del techo de 925 MHz.
+- El volcado de `:8093/metrics` de arriba es la respuesta real: `pid_settings`
+  con los límites del perfil, y `estado`, `error_percent` y `error_target` en
+  cada muestra.
+- Los topes en los dos caminos que escriben al hardware: el valor inicial (con su
+  aviso al recortar) y cada propuesta del bucle. En ninguna corrida se aplica un
+  valor fuera de 1180-1210 mV / 475-925 MHz.
+- 134 tests unitarios y el smoke test del proyecto: 67 ok, 0 fallos, 0 saltados.
 
 **No verificado, y conviene que lo tengas presente:**
 
-- **Tu miner.** Nada se ha medido en un chip real. Que 500 MHz a 1150 mV se
-  mantenga por debajo de 55 °C depende de tu refrigeración, y el perfil no puede
-  saberlo. Si no llega, el tuner bajará frecuencia hasta que llegue.
+- **Tu miner.** Los números concretos de esas corridas son del simulador, cuyo
+  modelo térmico es una fórmula, no un chip. Lo que se demuestra es el
+  *comportamiento* del tuner: qué decide y en qué orden. La frecuencia a la que
+  tu Gamma se planta en 60 °C solo la sabrás mirando el log.
+- **`errorPercentage`.** El simulador del harness no lo implementa; para poder
+  recorrer los tres estados se le añadió como función del voltaje (más voltaje,
+  menos errores), que es la dirección correcta del fenómeno pero no una medida.
+  El comportamiento de la estrategia ante esa señal es real; la señal no.
 - **`docker compose up`.** La imagen no se ha construido nunca: no había Docker
   ni red. Lo comprobado es el comando y el comportamiento del programa.
 - **Umbrel.** No he ejecutado nada en un Umbrel. El compose es estándar y no
   necesita privilegios, pero no es una app del store de Umbrel: es un
   `docker compose` que lanzas por SSH.
-- **Las dependencias reales.** `rich` y `pyfiglet` eran stubs, así que lo medido
-  es el comportamiento con ellos simulados. Los topes no dependen de eso: el
-  recorte a los límites es aritmética en `config.py` y en `apply_strategy`, y no
-  pasa por ninguna biblioteca de terceros. (`simple-pid` figuraba aquí y ya no:
-  se quitó de `requirements.txt` porque no queda ningún PID en el programa y
-  nadie lo importaba.)
 - **La primera media hora.** Déjalo con `docker compose logs -f` delante y mira
   las temperaturas de verdad antes de irte.
