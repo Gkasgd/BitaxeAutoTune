@@ -1,20 +1,22 @@
-# safe-BM1370.yaml — perfil COMPLETO para BM1370 (Bitaxe Gamma / 601)
+# safe-BM1370-estabilidad.yaml — perfil COMPLETO para BM1370 (Bitaxe Gamma / 601)
 #
-# Declara las 26 claves que el programa puede leer, en vez de heredar en
+# Declara las 32 claves que el programa puede leer, en vez de heredar en
 # silencio las que falten del YAML del chip. Asi lo que ves aqui es exactamente
-# lo que corre: no hay que ir a mirar BM1370.yaml para saber con que ganancias
-# o con que suelos esta trabajando el PID.
+# lo que corre: no hace falta abrir BM1370.yaml para saber con que limites
+# trabaja el tuner. Comprobado: este fichero no hereda ninguna clave.
 #
-#   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370.yaml
+# BM1370.yaml tiene que existir igualmente en el directorio. El tuner lo carga
+# antes de aplicar este encima, y aborta si no lo encuentra.
+#
+#   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370-estabilidad.yaml
 #
 # Como se aplica: el tuner lee el ASICModel del miner, carga <modelo>.yaml y
 # hace un update() con este fichero encima. Al declararlo todo, el YAML del
 # chip queda como red de seguridad y nada mas.
 #
-# AJUSTA LOS VALORES A TU HARDWARE. Los de aqui salen de dos sitios: los
-# limites y ganancias son los de BM1370.yaml del proyecto, y los topes y
-# objetivos estan puestos para un miner que en tus logs opera a 825 MHz /
-# 1200 mV / 27.3 W / 60 C. Nada de esto se ha medido en tu chip.
+# AJUSTA LOS VALORES A TU HARDWARE. Los topes y objetivos de aqui estan puestos
+# para un miner que en los logs de g opera a 825 MHz / 1200 mV / 27.3 W / 60 C.
+# En otro chip no valen: el voltaje minimo estable es propio de cada unidad.
 
 # =============================================================================
 # 1. LIMITES DE FRECUENCIA  (MHz)
@@ -24,9 +26,9 @@
 # valor inicial tambien se recorta (clamp_initial_values en config.py).
 MAX_FREQUENCY: 925
 
-# Suelo. Con ERROR_TUNING no es el ancla de ningun PID (no hay PID), pero sigue
-# siendo el limite inferior por el que el controlador nunca baja, y por tanto
-# define el espacio de busqueda por abajo.
+# Suelo: el limite inferior por el que el controlador nunca baja, y por tanto lo
+# que define el espacio de busqueda por abajo. Es tambien hasta donde puede
+# llegar la rama termica, que baja frecuencia al pasarse de TARGET_TEMP.
 MIN_FREQUENCY: 475
 
 # Frecuencia al arrancar. Cada ejecucion empieza aqui: no se carga el snapshot.
@@ -83,10 +85,9 @@ TARGET_TEMP: 60.0
 # dispararia los errores justo cuando hace falta estabilidad.
 POWER_LIMIT: 30.0
 
-# Hashrate objetivo en GH/s que persiguen los dos PID. Si esta por encima de
-# lo que el miner puede dar dentro de los topes, el controlador pide mas para
-# siempre y se queda pegado al techo. Ponlo un poco POR DEBAJO de la media que
-# ves en tus logs, o cada fluctuacion normal saca al tuner de "System stable".
+# NO SE USA. Ninguna de las dos estrategias mira el hashrate: es un resultado de
+# la frecuencia y el voltaje, no un objetivo. Se conserva por la columna del CSV
+# (ver la seccion 4). Cambiarlo no tiene ningun efecto.
 HASHRATE_SETPOINT: 1550
 
 # Segundos entre muestras. 30 porque g comprobo en su miner que la temperatura
@@ -104,14 +105,19 @@ HASHRATE_SETPOINT: 1550
 SAMPLE_INTERVAL: 30
 
 # =============================================================================
-# 4. GANANCIAS DE LOS DOS CONTROLADORES PID
+# 4. RESTOS DE LA EPOCA DEL PID  (no se leen)
 # =============================================================================
-# Los valores del proyecto para el BM1370. Toca esto en ultimo lugar: si el
-# tuner oscila, casi siempre el problema esta en HASHRATE_SETPOINT o en
-# MIN_FREQUENCY, no en las ganancias.
+# Estas siete claves NO las lee nadie para decidir nada. Vienen de cuando la
+# estrategia perseguia un setpoint de hashrate con dos controladores PID; hoy no
+# queda ningun PID en el programa y el hashrate no interviene en ninguna rama.
 #
-# KP responde al error actual, KI acumula el error pasado (es el que domina
-# aqui, porque arranca anclado en MIN_FREQUENCY), KD reacciona al cambio.
+# Lo unico que hacen es rellenar siete columnas del CSV (pid_freq_kp ... y
+# hashrate_setpoint), que se conservan para que un historial nuevo siga siendo
+# comparable con los antiguos. Sin declararlas, esas columnas salen vacias.
+#
+# Se pueden BORRAR de este fichero: con ERROR_TUNING en TRUE ya no son
+# obligatorias. Se dejan solo para que poner ERROR_TUNING en FALSE siga
+# funcionando sin editar nada mas. Cambiar sus valores no tiene ningun efecto.
 
 PID_FREQ_KP: 0.2
 PID_FREQ_KI: 0.01
@@ -137,8 +143,15 @@ PID_VOLT_KD: 0.02
 #      frecuencia; y solo con la frecuencia ya al tope, seguir bajando voltaje.
 #
 # Con esto las seis ganancias PID_* de la seccion 4 NO se usan: no hay ningun
-# controlador PID en esta estrategia. Se dejan declaradas porque validate_config
-# las exige y porque volver a FALSE devuelve el comportamiento anterior.
+# controlador PID en esta estrategia. Ya no son obligatorias con ERROR_TUNING en
+# TRUE (validate_config solo las exige en la otra rama), pero se dejan
+# declaradas porque poner esta clave en FALSE devuelve el comportamiento
+# anterior sin tener que anadir siete lineas.
+#
+# OJO: esta clave es la que elige la ESTRATEGIA, y su defecto es FALSE. Si se
+# borra esta linea, todo lo que declara la seccion 5 se ignora en silencio y
+# corre la estrategia por limites. Desde el arreglo de coherencia el arranque lo
+# avisa en el log, pero mejor no llegar ahi.
 ERROR_TUNING: TRUE
 
 # El objetivo: porcentaje de errores de hardware que no se quiere superar.

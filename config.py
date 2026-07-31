@@ -3,16 +3,26 @@
 Carga y validacion de la configuracion de BitaxePID.
 
 La configuracion se compone en dos capas: el YAML del modelo de ASIC
-(BM1366.yaml, BM1370.yaml...) con los parametros PID y los limites de
-voltaje y frecuencia de ese chip, y opcionalmente un YAML de usuario que
-sobreescribe claves concretas. Las opciones de linea de comandos se aplican
-encima de todo eso, en cli.py.
+(BM1366.yaml, BM1370.yaml...) con los limites de voltaje y frecuencia de ese
+chip, y opcionalmente un YAML de usuario que sobreescribe claves concretas. Las
+opciones de linea de comandos se aplican encima de todo eso, en cli.py.
+
+Hay tres categorias de clave, y la diferencia importa:
+
+  - Obligatorias siempre (`required_keys`): sin ellas no se puede ni escribir un
+    valor al miner. Si falta una, el programa termina.
+  - Obligatorias solo con la estrategia antigua (`CLAVES_SOLO_PID`): ningun
+    modulo las lee, pero alimentan columnas del CSV. Ver el comentario de la
+    lista.
+  - Opcionales (`CLAVES_OPCIONALES`): el programa tira con un valor por defecto
+    declarado en este modulo. Se avisa por log de las que falten.
 
 Uso:
-    from config import YamlConfigLoader, load_config, validate_config
+    from config import YamlConfigLoader, load_config, opcional, validate_config
 
     config = load_config(YamlConfigLoader(), "BM1366.yaml", "mi_config.yaml")
     validate_config(config)   # falta una clave -> termina; fuera de rango -> recorta
+    ventana = opcional(config, "ERROR_WINDOW")   # el valor, o su defecto
 
 Dependencias:
     - Terceros: pyyaml
@@ -27,6 +37,92 @@ from typing import Any, Dict, Optional
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+# Claves que solo tenian sentido cuando la estrategia perseguia un setpoint de
+# hashrate con dos controladores PID. Hoy NINGUN modulo las lee para decidir
+# nada: se buscaron una por una y las unicas apariciones son las columnas del
+# CSV (logger.py), que ya usan `pid_settings.get(clave, "")` y quedan vacias sin
+# romper la cabecera.
+#
+# Por eso no pueden seguir en `required_keys`: exigirlas obliga a declarar seis
+# ganancias PID y un objetivo de hashrate en un perfil de la estrategia de
+# errores, donde no significan nada. Un perfil limpio para un Bitaxe nuevo
+# terminaba con "Missing required config keys: PID_FREQ_KP, ..." y quien lo
+# leyera no tenia forma de saber que el programa no las usa.
+#
+# Se siguen exigiendo cuando ERROR_TUNING esta desactivado, porque ahi el CSV es
+# el de esa estrategia y sus columnas se comparan con historiales antiguos.
+CLAVES_SOLO_PID = (
+    "PID_FREQ_KP",
+    "PID_FREQ_KI",
+    "PID_FREQ_KD",
+    "PID_VOLT_KP",
+    "PID_VOLT_KI",
+    "PID_VOLT_KD",
+    "HASHRATE_SETPOINT",
+)
+
+
+# Claves OPCIONALES y el valor por defecto que aplica el codigo si faltan.
+#
+# Esta tabla es la unica fuente del valor: quien lee la configuracion llama a
+# `opcional()` en vez de repetir el defecto en su `config.get(clave, X)`. Antes
+# estaban escritos a mano en bitaxepid.py, con lo que el YAML documentaba un
+# numero y el codigo podia aplicar otro sin que nada lo detectara.
+#
+# Faltar no es un error, pero si algo que hay que poder ver: `validate_config`
+# deja en el log los defectos que quedan en vigor. El caso que lo motiva es
+# ERROR_TUNING: sin declararlo se corre la OTRA estrategia, y un perfil escrito
+# entero para la de estabilidad se ejecutaria con la de limites.
+#
+# No estan aqui las opcionales que no tienen defecto sino ausencia con
+# significado propio: ERROR_TARGET_PERCENT (obligatoria con ERROR_TUNING, la
+# comprueba bitaxepid.py; sin ella la estrategia de limites decide solo con
+# temperatura y potencia) ni PRIMARY_STRATUM/BACKUP_STRATUM (declararlas AMBAS
+# es lo que activa el stratum fijo en vez de medir latencias).
+CLAVES_OPCIONALES: Dict[str, Any] = {
+    "ERROR_TUNING": False,
+    "ERROR_HYSTERESIS": 0.5,
+    "ERROR_WINDOW": 7,
+    "ERROR_SETTLE": 3,
+    "TEMP_MARGIN": 2.0,
+    "ERROR_RETRY_CEILING": 50,
+    "LOWER_VOLTAGE_AFTER": 4,
+    "METRICS_SERVE": False,
+    "MANAGE_MINER_POOLS": False,
+    "USER_FILE": None,
+}
+
+
+def opcional(config: Dict[str, Any], key: str) -> Any:
+    """
+    Devolver el valor de una clave opcional, o su defecto de CLAVES_OPCIONALES.
+
+    Args:
+        config (Dict[str, Any]): Configuracion ya fusionada.
+        key (str): Nombre de la clave, que debe estar en CLAVES_OPCIONALES.
+
+    Returns:
+        Any: El valor configurado, o el defecto declarado en este modulo.
+
+    Raises:
+        KeyError: Si la clave no esta declarada como opcional. Es deliberado:
+            leer con un defecto inventado en el momento es justo lo que hacia
+            que los defectos del codigo y los del YAML se separaran.
+
+    Example:
+        >>> opcional({"ERROR_WINDOW": 9}, "ERROR_WINDOW")
+        9
+        >>> opcional({}, "ERROR_WINDOW")
+        7
+    """
+    if key not in CLAVES_OPCIONALES:
+        raise KeyError(
+            f"{key} no esta declarada en CLAVES_OPCIONALES: anadela ahi con su "
+            "valor por defecto en vez de pasar uno suelto en la llamada"
+        )
+    return config.get(key, CLAVES_OPCIONALES[key])
 
 
 class YamlConfigLoader:
@@ -199,14 +295,55 @@ def validate_ranges(config: Dict[str, Any]) -> None:
         sys.exit(1)
 
 
+def avisar_de_opcionales_ausentes(config: Dict[str, Any]) -> None:
+    """
+    Dejar en el log los valores por defecto que quedan en vigor.
+
+    Las claves de `CLAVES_OPCIONALES` no se exigen, pero su ausencia tampoco
+    deberia ser invisible: el programa acaba corriendo con numeros que no estan
+    escritos en ningun sitio que el usuario haya leido. El caso que motiva el
+    aviso es ERROR_TUNING, cuyo defecto (False) no es un matiz sino OTRA
+    estrategia: un perfil escrito entero para la de estabilidad, al que se le
+    olvide esa linea, arranca con la de limites y todo lo demas que declara
+    (ventana, histeresis, techo) se ignora en silencio.
+
+    Es un WARNING y no un error porque los defectos son deliberados y correctos
+    para el caso normal; lo que no puede pasar es que nadie sepa cuales rigen.
+
+    Args:
+        config (Dict[str, Any]): Configuracion ya fusionada.
+    """
+    ausentes = {k: v for k, v in CLAVES_OPCIONALES.items() if k not in config}
+    if not ausentes:
+        return
+    detalle = ", ".join(f"{k}={v}" for k, v in sorted(ausentes.items()))
+    logger.warning(
+        f"Claves opcionales no declaradas, se usan los valores por defecto del "
+        f"programa: {detalle}"
+    )
+    if "ERROR_TUNING" in ausentes:
+        logger.warning(
+            "ERROR_TUNING no esta declarado: se usara la estrategia por limites "
+            "(temperatura, potencia y errores) y NO la de estabilidad. Si este "
+            "perfil se escribio para la de estabilidad, declara ERROR_TUNING: TRUE."
+        )
+
+
 def validate_config(config: Dict[str, Any]) -> None:
     """
     Validate that required configuration keys are present.
 
     Tambien comprueba que los limites no esten invertidos (ver
-    `validate_ranges`) y recorta los valores iniciales al rango configurado
-    (ver `clamp_initial_values`). El orden importa: sin `validate_ranges` por
-    delante, `clamp_initial_values` recortaria contra un rango imposible.
+    `validate_ranges`), recorta los valores iniciales al rango configurado (ver
+    `clamp_initial_values`) y deja en el log los defectos de las claves
+    opcionales ausentes (ver `avisar_de_opcionales_ausentes`). El orden importa:
+    sin `validate_ranges` por delante, `clamp_initial_values` recortaria contra
+    un rango imposible.
+
+    Las siete claves de `CLAVES_SOLO_PID` se exigen SOLO cuando ERROR_TUNING
+    esta desactivado. Con la estrategia de estabilidad no las lee nadie, y
+    pedirlas obligaba a copiar seis ganancias PID a un perfil que no tiene
+    ningun PID para que el programa arrancara.
 
     Args:
         config (Dict[str, Any]): Configuration dictionary to validate.
@@ -221,25 +358,21 @@ def validate_config(config: Dict[str, Any]) -> None:
         "LOG_FILE",
         "SNAPSHOT_FILE",
         "POOLS_FILE",
-        "PID_FREQ_KP",
-        "PID_FREQ_KI",
-        "PID_FREQ_KD",
-        "PID_VOLT_KP",
-        "PID_VOLT_KI",
-        "PID_VOLT_KD",
         "MIN_VOLTAGE",
         "MAX_VOLTAGE",
         "MIN_FREQUENCY",
         "MAX_FREQUENCY",
         "VOLTAGE_STEP",
         "FREQUENCY_STEP",
-        "HASHRATE_SETPOINT",
         "TARGET_TEMP",
         "POWER_LIMIT",
     ]
+    if not opcional(config, "ERROR_TUNING"):
+        required_keys.extend(CLAVES_SOLO_PID)
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
         logger.error(f"Missing required config keys: {', '.join(missing_keys)}")
         sys.exit(1)
     validate_ranges(config)
     clamp_initial_values(config)
+    avisar_de_opcionales_ausentes(config)

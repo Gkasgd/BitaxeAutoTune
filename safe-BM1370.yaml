@@ -6,10 +6,18 @@
 #
 #   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370.yaml
 #
-# Limites de fabrica del BM1370 para comparar: 1000-1250 mV y 400-625 MHz.
-# Este perfil se queda por debajo en ambos.
+# CUIDADO CON LO QUE SE HEREDA. Lo que no esta aqui sale de BM1370.yaml, o sea
+# de fabrica, y eso incluye limites. Este perfil declara los CUATRO extremos
+# (los dos maximos y los dos minimos) para que el rango efectivo se lea de un
+# tiron en este fichero y no haya que ir a mirar el del chip:
+#
+#     de fabrica (BM1370.yaml):  1000-1250 mV   400-625 MHz
+#     este perfil:               1100-1150 mV   425-500 MHz
+#
+# Si se anaden claves, conviene comprobar en el arranque cual rige de verdad:
+# el endpoint :8093/metrics publica los limites vigentes.
 
-# --- Los tres topes de seguridad -------------------------------------------
+# --- Los cinco topes de seguridad ------------------------------------------
 
 # El tuner baja frecuencia (y luego voltaje) en cuanto se pasa de aqui.
 TARGET_TEMP: 55.0
@@ -19,6 +27,24 @@ MAX_FREQUENCY: 500
 
 # Tope duro de voltaje. 1150 en lugar de los 1250 de fabrica.
 MAX_VOLTAGE: 1150
+
+# Los SUELOS, declarados aqui y no heredados. Antes este perfil solo bajaba los
+# maximos, asi que MIN_VOLTAGE y MIN_FREQUENCY salian de BM1370.yaml: 1000 mV y
+# 400 MHz, los de fabrica. Un perfil llamado "safe" con el rango efectivo
+# 1000-1150 mV, o sea 150 mV de recorrido hacia abajo desde su propio tope.
+#
+# Importa porque el suelo no es decorativo: es hasta donde puede bajar la
+# busqueda del voltaje minimo (prioridad 5) y hasta donde baja la rama termica
+# cuando ya no queda frecuencia. A 1000 mV un BM1370 no mina de forma estable,
+# asi que el tuner podia gastar horas explorando voltajes inservibles y
+# quedarse ahi si la temperatura seguia alta.
+#
+# 1100 es el INITIAL_VOLTAGE de este perfil: arrancar EN el suelo es
+# deliberado, porque el camino previsto es subir. Con 425 MHz queda un escalon
+# de FREQUENCY_STEP por debajo del arranque, suficiente para que la rama
+# termica tenga a donde bajar sin irse a la mitad de la frecuencia.
+MIN_VOLTAGE: 1100
+MIN_FREQUENCY: 425
 
 # --- Arranque conservador --------------------------------------------------
 # Se arranca por debajo de los topes y se deja subir al PID, en vez de empezar

@@ -26,7 +26,7 @@ from typing import Any
 
 from api_client import BitaxeAPIClient
 from cli import parse_arguments
-from config import YamlConfigLoader, load_config, validate_config
+from config import YamlConfigLoader, load_config, opcional, validate_config
 from logger import Logger
 from metrics_server import start_metrics_server
 from stratum import parse_stratum_url
@@ -76,9 +76,12 @@ def main() -> None:
         config["SAMPLE_INTERVAL"] = args.sample_interval
     validate_config(config)
 
-    serve_metrics = args.serve_metrics or config.get("METRICS_SERVE", False)
+    # Los defectos de las claves opcionales viven en config.CLAVES_OPCIONALES,
+    # no repetidos aqui: tenerlos en dos sitios permitia que el YAML documentara
+    # un numero y el codigo aplicara otro.
+    serve_metrics = args.serve_metrics or opcional(config, "METRICS_SERVE")
     config["METRICS_SERVE"] = serve_metrics
-    manage_pools = args.manage_pools or config.get("MANAGE_MINER_POOLS", False)
+    manage_pools = args.manage_pools or opcional(config, "MANAGE_MINER_POOLS")
     config["MANAGE_MINER_POOLS"] = manage_pools
 
     logger_instance = Logger(config["LOG_FILE"], config["SNAPSHOT_FILE"])
@@ -89,7 +92,7 @@ def main() -> None:
     # porcentaje de errores de hardware del miner. Por defecto sigue la
     # estrategia PID de siempre, para no cambiar el comportamiento de nadie que
     # no lo pida explicitamente.
-    if config.get("ERROR_TUNING", False):
+    if opcional(config, "ERROR_TUNING"):
         if "ERROR_TARGET_PERCENT" not in config:
             logging.error(
                 "ERROR_TUNING esta activado pero falta ERROR_TARGET_PERCENT: "
@@ -107,12 +110,12 @@ def main() -> None:
             target_temp=config["TARGET_TEMP"],
             power_limit=config["POWER_LIMIT"],
             error_target=config["ERROR_TARGET_PERCENT"],
-            error_hysteresis=config.get("ERROR_HYSTERESIS", 0.5),
-            error_window=config.get("ERROR_WINDOW", 7),
-            error_settle=config.get("ERROR_SETTLE", 3),
-            temp_margin=config.get("TEMP_MARGIN", 2.0),
-            retry_ceiling=config.get("ERROR_RETRY_CEILING", 50),
-            lower_voltage_after=config.get("LOWER_VOLTAGE_AFTER", 4),
+            error_hysteresis=opcional(config, "ERROR_HYSTERESIS"),
+            error_window=opcional(config, "ERROR_WINDOW"),
+            error_settle=opcional(config, "ERROR_SETTLE"),
+            temp_margin=opcional(config, "TEMP_MARGIN"),
+            retry_ceiling=opcional(config, "ERROR_RETRY_CEILING"),
+            lower_voltage_after=opcional(config, "LOWER_VOLTAGE_AFTER"),
         )
         logging.info(
             f"Estrategia de estabilidad: objetivo {config['ERROR_TARGET_PERCENT']}% "
@@ -121,8 +124,10 @@ def main() -> None:
         )
     else:
         # Las ganancias PID_* y HASHRATE_SETPOINT ya no se pasan: no hay PID ni
-        # objetivo de hashrate. Siguen siendo claves obligatorias en los YAML
-        # (validate_config las exige) para no invalidar los ficheros existentes.
+        # objetivo de hashrate. Se siguen exigiendo en los YAML de ESTA rama
+        # (validate_config las pide cuando ERROR_TUNING esta desactivado) para no
+        # invalidar los ficheros existentes ni dejar huecos en las columnas del
+        # CSV con las que se comparan historiales antiguos.
         tuning_strategy = PIDTuningStrategy(
             min_voltage=config["MIN_VOLTAGE"],
             max_voltage=config["MAX_VOLTAGE"],
@@ -132,13 +137,15 @@ def main() -> None:
             frequency_step=config["FREQUENCY_STEP"],
             target_temp=config["TARGET_TEMP"],
             power_limit=config["POWER_LIMIT"],
-            temp_margin=config.get("TEMP_MARGIN", 2.0),
+            temp_margin=opcional(config, "TEMP_MARGIN"),
             # ERROR_TARGET_PERCENT es opcional aqui (a diferencia de la
             # estrategia de estabilidad, que sin el no puede decidir nada). Si
             # no esta, esta estrategia decide solo con temperatura y potencia.
+            # No lleva defecto en CLAVES_OPCIONALES a proposito: su ausencia
+            # significa "sin criterio de errores", no un numero concreto.
             error_target=config.get("ERROR_TARGET_PERCENT"),
-            error_hysteresis=config.get("ERROR_HYSTERESIS", 0.5),
-            estable_para_bajar=config.get("ERROR_SETTLE", 3),
+            error_hysteresis=opcional(config, "ERROR_HYSTERESIS"),
+            estable_para_bajar=opcional(config, "ERROR_SETTLE"),
         )
         logging.info(
             f"Estrategia por limites: temperatura objetivo {config['TARGET_TEMP']}C, "
@@ -170,7 +177,7 @@ def main() -> None:
         initial_frequency=config["INITIAL_FREQUENCY"],
         pools_file=args.pools_file if args.pools_file else config["POOLS_FILE"],
         config=config,
-        user_file=args.user_file if args.user_file else config.get("USER_FILE", None),
+        user_file=args.user_file if args.user_file else opcional(config, "USER_FILE"),
         primary_stratum=primary_stratum,
         backup_stratum=backup_stratum,
         manage_pools=manage_pools,
