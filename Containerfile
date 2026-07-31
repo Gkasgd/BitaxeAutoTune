@@ -18,6 +18,17 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # muestra "Banner file not found".
 COPY *.yaml *.py banner.txt ./
 
+# Los YAML de chip y los perfiles van en subdirectorios, y `COPY *.yaml` NO los
+# incluye: los comodines de COPY no bajan de nivel. Con los seis ficheros en la
+# raiz esto no hacia falta; al moverlos, olvidar estas dos lineas produce una
+# imagen sin ninguna configuracion, el programa termina con "ASIC model YAML file
+# chips/BM1370.yaml not found" y `restart: unless-stopped` lo deja en bucle de
+# reinicio. No lo detecta ninguna prueba local, porque para verlo hay que
+# construir la imagen; el smoke test comprueba en su lugar que estas dos rutas
+# esten declaradas aqui.
+COPY chips/ ./chips/
+COPY perfiles/ ./perfiles/
+
 # Expose port
 # El servidor de metricas solo escucha si se arranca con --serve-metrics
 # (o con METRICS_SERVE en la configuracion).

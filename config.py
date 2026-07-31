@@ -2,17 +2,30 @@
 """
 Carga y validacion de la configuracion de BitaxePID.
 
-La configuracion se compone en dos capas: el YAML del modelo de ASIC
-(BM1366.yaml, BM1370.yaml...) con los parametros PID y los limites de
-voltaje y frecuencia de ese chip, y opcionalmente un YAML de usuario que
+La configuracion se compone en dos capas: el YAML del modelo de ASIC, en
+`chips/` (chips/BM1366.yaml, chips/BM1370.yaml...), con los limites de voltaje y
+frecuencia de ese chip, y opcionalmente un YAML de usuario de `perfiles/` que
 sobreescribe claves concretas. Las opciones de linea de comandos se aplican
 encima de todo eso, en cli.py.
 
-Uso:
-    from config import YamlConfigLoader, load_config, validate_config
+Hay tres categorias de clave, y la diferencia importa:
 
-    config = load_config(YamlConfigLoader(), "BM1366.yaml", "mi_config.yaml")
+  - Obligatorias siempre (`required_keys`): sin ellas no se puede ni escribir un
+    valor al miner. Si falta una, el programa termina.
+  - Obligatorias solo con la estrategia antigua (`CLAVES_SOLO_PID`): ningun
+    modulo las lee, pero alimentan columnas del CSV. Ver el comentario de la
+    lista.
+  - Opcionales (`CLAVES_OPCIONALES`): el programa tira con un valor por defecto
+    declarado en este modulo. Se avisa por log de las que falten.
+
+Uso:
+    from config import YamlConfigLoader, load_config, opcional, validate_config
+
+    config = load_config(
+        YamlConfigLoader(), "chips/BM1366.yaml", "perfiles/gamma-estabilidad.yaml"
+    )
     validate_config(config)   # falta una clave -> termina; fuera de rango -> recorta
+    ventana = opcional(config, "ERROR_WINDOW")   # el valor, o su defecto
 
 Dependencias:
     - Terceros: pyyaml
@@ -22,11 +35,97 @@ Dependencias:
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+# Claves que solo tenian sentido cuando la estrategia perseguia un setpoint de
+# hashrate con dos controladores PID. Hoy NINGUN modulo las lee para decidir
+# nada: se buscaron una por una y las unicas apariciones son las columnas del
+# CSV (logger.py), que ya usan `pid_settings.get(clave, "")` y quedan vacias sin
+# romper la cabecera.
+#
+# Por eso no pueden seguir en `required_keys`: exigirlas obliga a declarar seis
+# ganancias PID y un objetivo de hashrate en un perfil de la estrategia de
+# errores, donde no significan nada. Un perfil limpio para un Bitaxe nuevo
+# terminaba con "Missing required config keys: PID_FREQ_KP, ..." y quien lo
+# leyera no tenia forma de saber que el programa no las usa.
+#
+# Se siguen exigiendo cuando ERROR_TUNING esta desactivado, porque ahi el CSV es
+# el de esa estrategia y sus columnas se comparan con historiales antiguos.
+CLAVES_SOLO_PID = (
+    "PID_FREQ_KP",
+    "PID_FREQ_KI",
+    "PID_FREQ_KD",
+    "PID_VOLT_KP",
+    "PID_VOLT_KI",
+    "PID_VOLT_KD",
+    "HASHRATE_SETPOINT",
+)
+
+
+# Claves OPCIONALES y el valor por defecto que aplica el codigo si faltan.
+#
+# Esta tabla es la unica fuente del valor: quien lee la configuracion llama a
+# `opcional()` en vez de repetir el defecto en su `config.get(clave, X)`. Antes
+# estaban escritos a mano en bitaxepid.py, con lo que el YAML documentaba un
+# numero y el codigo podia aplicar otro sin que nada lo detectara.
+#
+# Faltar no es un error, pero si algo que hay que poder ver: `validate_config`
+# deja en el log los defectos que quedan en vigor. El caso que lo motiva es
+# ERROR_TUNING: sin declararlo se corre la OTRA estrategia, y un perfil escrito
+# entero para la de estabilidad se ejecutaria con la de limites.
+#
+# No estan aqui las opcionales que no tienen defecto sino ausencia con
+# significado propio: ERROR_TARGET_PERCENT (obligatoria con ERROR_TUNING, la
+# comprueba bitaxepid.py; sin ella la estrategia de limites decide solo con
+# temperatura y potencia) ni PRIMARY_STRATUM/BACKUP_STRATUM (declararlas AMBAS
+# es lo que activa el stratum fijo en vez de medir latencias).
+CLAVES_OPCIONALES: Dict[str, Any] = {
+    "ERROR_TUNING": False,
+    "ERROR_HYSTERESIS": 0.5,
+    "ERROR_WINDOW": 7,
+    "ERROR_SETTLE": 3,
+    "TEMP_MARGIN": 2.0,
+    "ERROR_RETRY_CEILING": 50,
+    "LOWER_VOLTAGE_AFTER": 4,
+    "METRICS_SERVE": False,
+    "MANAGE_MINER_POOLS": False,
+    "USER_FILE": None,
+}
+
+
+def opcional(config: Dict[str, Any], key: str) -> Any:
+    """
+    Devolver el valor de una clave opcional, o su defecto de CLAVES_OPCIONALES.
+
+    Args:
+        config (Dict[str, Any]): Configuracion ya fusionada.
+        key (str): Nombre de la clave, que debe estar en CLAVES_OPCIONALES.
+
+    Returns:
+        Any: El valor configurado, o el defecto declarado en este modulo.
+
+    Raises:
+        KeyError: Si la clave no esta declarada como opcional. Es deliberado:
+            leer con un defecto inventado en el momento es justo lo que hacia
+            que los defectos del codigo y los del YAML se separaran.
+
+    Example:
+        >>> opcional({"ERROR_WINDOW": 9}, "ERROR_WINDOW")
+        9
+        >>> opcional({}, "ERROR_WINDOW")
+        7
+    """
+    if key not in CLAVES_OPCIONALES:
+        raise KeyError(
+            f"{key} no esta declarada en CLAVES_OPCIONALES: anadela ahi con su "
+            "valor por defecto en vez de pasar uno suelto en la llamada"
+        )
+    return config.get(key, CLAVES_OPCIONALES[key])
 
 
 class YamlConfigLoader:
@@ -37,14 +136,14 @@ class YamlConfigLoader:
         Load configuration settings from a YAML file.
 
         Args:
-            file_path (str): Path to the configuration file (e.g., "BM1366.yaml").
+            file_path (str): Path to the configuration file (e.g., "chips/BM1366.yaml").
 
         Returns:
             Dict[str, Any]: Configuration data as a dictionary (e.g., {"INITIAL_VOLTAGE": 1200}), empty if loading fails.
 
         Example:
             >>> loader = YamlConfigLoader()
-            >>> config = loader.load_config("BM1366.yaml")
+            >>> config = loader.load_config("chips/BM1366.yaml")
             >>> config["INITIAL_VOLTAGE"]
             1200
         """
@@ -57,6 +156,137 @@ class YamlConfigLoader:
         except Exception as e:
             logger.error(f"Failed to load configuration file {file_path}: {e}")
             return {}
+
+
+def load_config_con_procedencia(
+    config_loader: YamlConfigLoader,
+    asic_yaml: str,
+    user_config_path: Optional[str] = None,
+) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """
+    Como `load_config`, pero devolviendo tambien de donde sale cada clave.
+
+    La configuracion se monta en dos capas: el YAML del chip que el miner
+    reporta, y encima el `--config` del usuario. El resultado fusionado no dice
+    cual gano, y eso importa: un perfil que solo declara los maximos deja los
+    minimos en los de fabrica, que es como un perfil llamado "seguro" acaba con
+    un rango efectivo que no es el que promete.
+
+    Args:
+        config_loader (YamlConfigLoader): Loader for YAML files.
+        asic_yaml (str): Path to ASIC model YAML file.
+        user_config_path (Optional[str]): Path to optional user config YAML.
+
+    Returns:
+        Tuple[Dict[str, Any], Dict[str, str]]: la configuracion fusionada, y un
+            diccionario clave -> ruta del fichero que aporto el valor final.
+    """
+    config = load_config(config_loader, asic_yaml, user_config_path)
+    # Se releen los dos ficheros en vez de instrumentar la fusion: load_config ya
+    # ha comprobado que existen y se pueden leer, y asi la ruta que de verdad
+    # arranca el programa no cambia de forma.
+    del_chip = config_loader.load_config(asic_yaml)
+    procedencia = {clave: asic_yaml for clave in del_chip}
+    if user_config_path:
+        for clave in config_loader.load_config(user_config_path):
+            procedencia[clave] = user_config_path
+    return config, procedencia
+
+
+def claves_heredadas(procedencia: Dict[str, str], user_config_path: str) -> list:
+    """Claves que el perfil de usuario NO declara y hereda del YAML del chip."""
+    return sorted(k for k, origen in procedencia.items() if origen != user_config_path)
+
+
+def ruta_yaml_de_chip(asic_model: str) -> str:
+    """
+    Ruta del YAML de fabrica del modelo de ASIC que reporta el miner.
+
+    En un solo sitio porque la elige el arranque a partir de la respuesta de la
+    API, y tambien --dry-run a partir de --asic. Con la ruta escrita en cada
+    llamada, mover los YAML de sitio deja uno de los dos caminos apuntando al
+    antiguo, y el que se rompe es el que no tiene test que no necesite un miner.
+
+    Los YAML de fabrica viven en `chips/` y los perfiles de usuario en
+    `perfiles/`. Estaban los seis en la raiz, donde nada distinguia el que el
+    programa elige solo (por el modelo que reporta el miner) de los dos que se
+    pasan a mano con --config.
+
+    Args:
+        asic_model (str): Modelo tal como lo devuelve la API ("BM1370") o
+            "default" si la respuesta no lo trae.
+
+    Returns:
+        str: Ruta relativa al directorio de trabajo.
+    """
+    return f"chips/{asic_model}.yaml"
+
+
+def registrar_procedencia(
+    procedencia: Dict[str, str], asic_yaml: str, user_config_path: Optional[str]
+) -> None:
+    """
+    Dejar en el log INFO que claves manda cada capa.
+
+    Sin esto, la herencia entre el YAML del chip y el perfil de usuario es
+    invisible: el log dice que se cargaron dos ficheros, y no cual gano en cada
+    clave. El caso que importa es un perfil que baja MAX_VOLTAGE y se deja
+    MIN_VOLTAGE sin declarar: el rango efectivo no es el que el nombre del
+    fichero promete, y hasta ahora no habia forma de verlo sin leer los dos YAML
+    a la vez.
+
+    Args:
+        procedencia (Dict[str, str]): Salida de `load_config_con_procedencia`.
+        asic_yaml (str): Ruta del YAML del chip.
+        user_config_path (Optional[str]): Ruta del perfil de usuario, si hay.
+    """
+    if not user_config_path:
+        logger.info(
+            f"Configuracion cargada solo de {asic_yaml} (limites de fabrica del "
+            "chip): no se paso --config"
+        )
+        return
+    heredadas = claves_heredadas(procedencia, user_config_path)
+    propias = len(procedencia) - len(heredadas)
+    if heredadas:
+        logger.info(
+            f"{propias} claves declaradas en {user_config_path}; "
+            f"{len(heredadas)} heredadas de {asic_yaml}: "
+            + ", ".join(heredadas)
+        )
+    else:
+        logger.info(
+            f"{propias} claves, todas declaradas en {user_config_path}: no se "
+            f"hereda nada de {asic_yaml}"
+        )
+
+
+def imprimir_configuracion_efectiva(
+    config: Dict[str, Any], procedencia: Dict[str, str]
+) -> None:
+    """
+    Escribir por stdout la configuracion con la que se arrancaria, y su origen.
+
+    Es la salida de `--dry-run`. Va por `print` y no por el logger a proposito:
+    el logger escribe a un fichero, y esto se pide para leerlo en la terminal.
+    Incluye las claves opcionales ausentes con su defecto, marcadas como
+    (defecto del programa), porque son justo las que no estan en ningun YAML y
+    aun asi rigen.
+
+    Args:
+        config (Dict[str, Any]): Configuracion fusionada y ya validada.
+        procedencia (Dict[str, str]): Salida de `load_config_con_procedencia`.
+    """
+    ancho = max(len(k) for k in config) if config else 0
+    print("Configuracion efectiva:")
+    for clave in sorted(config):
+        origen = procedencia.get(clave, "override de linea de comandos")
+        print(f"  {clave:<{ancho}}  {config[clave]!r:<28}  <- {origen}")
+    ausentes = sorted(k for k in CLAVES_OPCIONALES if k not in config)
+    if ausentes:
+        print("\nOpcionales no declaradas, rige el defecto del programa:")
+        for clave in ausentes:
+            print(f"  {clave:<{ancho}}  {CLAVES_OPCIONALES[clave]!r}")
 
 
 def load_config(
@@ -199,14 +429,55 @@ def validate_ranges(config: Dict[str, Any]) -> None:
         sys.exit(1)
 
 
+def avisar_de_opcionales_ausentes(config: Dict[str, Any]) -> None:
+    """
+    Dejar en el log los valores por defecto que quedan en vigor.
+
+    Las claves de `CLAVES_OPCIONALES` no se exigen, pero su ausencia tampoco
+    deberia ser invisible: el programa acaba corriendo con numeros que no estan
+    escritos en ningun sitio que el usuario haya leido. El caso que motiva el
+    aviso es ERROR_TUNING, cuyo defecto (False) no es un matiz sino OTRA
+    estrategia: un perfil escrito entero para la de estabilidad, al que se le
+    olvide esa linea, arranca con la de limites y todo lo demas que declara
+    (ventana, histeresis, techo) se ignora en silencio.
+
+    Es un WARNING y no un error porque los defectos son deliberados y correctos
+    para el caso normal; lo que no puede pasar es que nadie sepa cuales rigen.
+
+    Args:
+        config (Dict[str, Any]): Configuracion ya fusionada.
+    """
+    ausentes = {k: v for k, v in CLAVES_OPCIONALES.items() if k not in config}
+    if not ausentes:
+        return
+    detalle = ", ".join(f"{k}={v}" for k, v in sorted(ausentes.items()))
+    logger.warning(
+        f"Claves opcionales no declaradas, se usan los valores por defecto del "
+        f"programa: {detalle}"
+    )
+    if "ERROR_TUNING" in ausentes:
+        logger.warning(
+            "ERROR_TUNING no esta declarado: se usara la estrategia por limites "
+            "(temperatura, potencia y errores) y NO la de estabilidad. Si este "
+            "perfil se escribio para la de estabilidad, declara ERROR_TUNING: TRUE."
+        )
+
+
 def validate_config(config: Dict[str, Any]) -> None:
     """
     Validate that required configuration keys are present.
 
     Tambien comprueba que los limites no esten invertidos (ver
-    `validate_ranges`) y recorta los valores iniciales al rango configurado
-    (ver `clamp_initial_values`). El orden importa: sin `validate_ranges` por
-    delante, `clamp_initial_values` recortaria contra un rango imposible.
+    `validate_ranges`), recorta los valores iniciales al rango configurado (ver
+    `clamp_initial_values`) y deja en el log los defectos de las claves
+    opcionales ausentes (ver `avisar_de_opcionales_ausentes`). El orden importa:
+    sin `validate_ranges` por delante, `clamp_initial_values` recortaria contra
+    un rango imposible.
+
+    Las siete claves de `CLAVES_SOLO_PID` se exigen SOLO cuando ERROR_TUNING
+    esta desactivado. Con la estrategia de estabilidad no las lee nadie, y
+    pedirlas obligaba a copiar seis ganancias PID a un perfil que no tiene
+    ningun PID para que el programa arrancara.
 
     Args:
         config (Dict[str, Any]): Configuration dictionary to validate.
@@ -221,25 +492,21 @@ def validate_config(config: Dict[str, Any]) -> None:
         "LOG_FILE",
         "SNAPSHOT_FILE",
         "POOLS_FILE",
-        "PID_FREQ_KP",
-        "PID_FREQ_KI",
-        "PID_FREQ_KD",
-        "PID_VOLT_KP",
-        "PID_VOLT_KI",
-        "PID_VOLT_KD",
         "MIN_VOLTAGE",
         "MAX_VOLTAGE",
         "MIN_FREQUENCY",
         "MAX_FREQUENCY",
         "VOLTAGE_STEP",
         "FREQUENCY_STEP",
-        "HASHRATE_SETPOINT",
         "TARGET_TEMP",
         "POWER_LIMIT",
     ]
+    if not opcional(config, "ERROR_TUNING"):
+        required_keys.extend(CLAVES_SOLO_PID)
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
         logger.error(f"Missing required config keys: {', '.join(missing_keys)}")
         sys.exit(1)
     validate_ranges(config)
     clamp_initial_values(config)
+    avisar_de_opcionales_ausentes(config)

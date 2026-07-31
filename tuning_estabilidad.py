@@ -109,6 +109,7 @@ class EstabilidadTuningStrategy:
         error_settle: int = 3,
         temp_margin: float = 2.0,
         retry_ceiling: int = 50,
+        lower_voltage_after: int = 4,
     ) -> None:
         """
         Args:
@@ -158,6 +159,38 @@ class EstabilidadTuningStrategy:
                 requisito es no superar el objetivo. Subelo si prefieres
                 estabilidad aun mas estricta; bajalo si prefieres perseguir la
                 frecuencia mas de cerca.
+            lower_voltage_after: Cuantas decisiones estables seguidas se exigen
+                antes de probar un paso de voltaje hacia abajo. Es una perilla
+                aparte de retry_ceiling porque las dos esperas no cuestan lo
+                mismo, aunque antes compartieran valor:
+
+                    - Reintentar una FRECUENCIA que fallo cuesta caro: sube el
+                      calor y los errores de golpe, y si vuelve a fallar hay que
+                      deshacerlo. De ahi las 50 decisiones.
+                    - Probar un paso de voltaje hacia ABAJO no cuesta eso. El
+                      paso es de 10 mV, el efecto se ve en (error_settle +
+                      error_window) muestras, y si se pasa de errores la
+                      prioridad 3 lo devuelve arriba en la decision siguiente y
+                      _v_suelo impide repetirlo. El coste real de equivocarse es
+                      una tanda de medidas, no una excursion termica.
+
+                Medido sobre el chip simulado con el ruido real (desviacion
+                1.24), 30 semillas, con retry_ceiling fijo en 50. Tiempo por
+                encima del objetivo del 2 % en regimen permanente, y cuanto
+                tarda el primer paso a 30 s por muestra:
+
+                    espera  1 -> 4.5 % de media (peor 7 %), primer paso 22 min
+                    espera  2 -> 4.3 %          (peor 8 %),               25 min
+                    espera  4 -> 3.1 %          (peor 7 %),               30 min
+                    espera  6 -> 3.0 %          (peor 6 %),               34 min
+                    espera 10 -> 1.9 %          (peor 5 %),               44 min
+                    espera 50 -> 0.0 %          (peor 0 %),              144 min
+
+                El 4 por defecto es el codo de esa curva: baja el incumplimiento
+                a un tercio del que da la espera de 1 sin pagar las dos horas y
+                media de la espera de 50. Es una perilla honesta: bajalo a 1 o 2
+                si prefieres convergencia rapida y aceptas el 4-5 % de tiempo
+                fuera de objetivo, subelo si el ahorro de mV no te importa.
         """
         self.min_voltage = min_voltage
         self.max_voltage = max_voltage
@@ -206,6 +239,11 @@ class EstabilidadTuningStrategy:
         # estables, que es el "y asi sucesivamente" del procedimiento.
         self._estables = 0
         self.reintentar_techo = max(1, int(retry_ceiling))
+        # Espera propia para la bajada de voltaje. Compartir el contador con
+        # reintentar_techo ataba dos cosas que no cuestan lo mismo: con el 50 por
+        # defecto, buscar el voltaje minimo tardaba dos horas y media en dar el
+        # PRIMER paso, cuando el efecto de ese paso se mide en 4 minutos.
+        self.bajar_voltaje_tras = max(1, int(lower_voltage_after))
         # Suelo de voltaje aprendido, simetrico a _f_techo: el voltaje mas bajo
         # que se probo y NO aguanto los errores. Hace que la busqueda del minimo
         # sea monotona (no se vuelve a bajar por debajo de lo que ya fallo) en
@@ -676,15 +714,23 @@ class EstabilidadTuningStrategy:
             # incumplimiento subia del 6-9 % al 36-43 %.
             #
             # Las dos condiciones que lo hacen converger:
-            #   - esperar `reintentar_techo` decisiones estables seguidas (el
+            #   - esperar `bajar_voltaje_tras` decisiones estables seguidas (el
             #     contador _estables), asi cada intento se paga con una tanda de
             #     medidas buenas y no se persigue el ruido;
             #   - recordar en _v_suelo el voltaje que no aguanto, para no volver
             #     a bajar ahi. La busqueda es monotona y termina, en vez de
             #     ciclar cruzando el objetivo en cada vuelta.
+            #
+            # La espera es la de `bajar_voltaje_tras` y NO la de reintentar_techo,
+            # que es lo que habia antes. Con las dos atadas al 50 por defecto, el
+            # primer paso hacia abajo tardaba 144 minutos: se estaba pagando por
+            # un paso de 10 mV el precio de reintentar una frecuencia. Medido, lo
+            # unico que compra esa espera de mas es bajar el incumplimiento del
+            # 3.1 % al 0 %, y el 3.1 % ya esta por debajo del 6-9 % que da el
+            # lazo entero. Ver el docstring del parametro para la curva completa.
             if (
                 v > self.min_voltage
-                and self._estables >= self.reintentar_techo
+                and self._estables >= self.bajar_voltaje_tras
                 # Estricto: el suelo es un voltaje que YA se probo y no aguanto,
                 # asi que hay que quedarse por encima. Con >= se volveria a bajar
                 # exactamente a el, se pasaria de errores otra vez, y el lazo

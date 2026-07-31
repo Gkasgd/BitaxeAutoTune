@@ -26,7 +26,7 @@ import time
 from typing import Any, Dict, List, Optional, Union
 
 from api_client import BitaxeAPIClient
-from config import YamlConfigLoader
+from config import YamlConfigLoader, opcional
 from logger import Logger
 from metrics_server import update_metrics
 from stratum import get_fastest_pools, parse_stratum_url
@@ -256,8 +256,18 @@ class TuningManager:
             "fallbackStratumUser", primary["user"]
         )
         if not primary["user"] or not backup["user"]:
+            # El mensaje decia solo que faltaban, no de donde salen ni que hacer.
+            # Se llega aqui cuando el miner reporta stratumUser vacio y el
+            # user.yaml tampoco lo trae, que es el estado por defecto del
+            # repositorio a proposito: antes venia con una direccion del proyecto
+            # original y el hashrate se habria ido a un tercero.
             logging.error(
-                f"Stratum users missing: Primary='{primary['user']}', Backup='{backup['user']}'"
+                f"Stratum users missing: Primary='{primary['user']}', "
+                f"Backup='{backup['user']}'. Con --manage-pools hay que dar una "
+                f"direccion de pago: ponla en {self.user_file} (las dos claves, "
+                "stratumUser y fallbackStratumUser), o en el propio miner desde "
+                "AxeOS, o con --stratum-user. Sin usuario el miner no mina, asi "
+                "que no se aplica nada y se sale."
             )
             sys.exit(1)
 
@@ -492,7 +502,7 @@ class TuningManager:
             metrics["error_target"] = self.tuning_strategy.error_target
             metrics["estado"] = self.tuning_strategy.estado
         self.logger.log_to_csv(**metrics)
-        if self.config.get("METRICS_SERVE", False):
+        if opcional(self.config, "METRICS_SERVE"):
             # Al servidor HTTP va una version filtrada, no `metrics` tal cual: el
             # endpoint :8093/metrics no tiene autenticacion y escucha en todas las
             # interfaces, mientras que el CSV es un fichero local y si puede

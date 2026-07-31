@@ -15,7 +15,7 @@ Usage:
     python bitaxepid.py --ip <miner_ip> [--pools-file pools2.yaml] [--logging-level debug] [--serve-metrics] [--manage-pools]
 
 Dependencies:
-    - Terceros: rich, pyyaml, simple_pid, pyfiglet, urllib3
+    - Terceros: rich, pyyaml, pyfiglet, urllib3
     - Estandar: logging, signal, sys, typing
 """
 
@@ -26,7 +26,15 @@ from typing import Any
 
 from api_client import BitaxeAPIClient
 from cli import parse_arguments
-from config import YamlConfigLoader, load_config, validate_config
+from config import (
+    YamlConfigLoader,
+    imprimir_configuracion_efectiva,
+    load_config_con_procedencia,
+    opcional,
+    registrar_procedencia,
+    ruta_yaml_de_chip,
+    validate_config,
+)
 from logger import Logger
 from metrics_server import start_metrics_server
 from stratum import parse_stratum_url
@@ -37,16 +45,82 @@ from ui_null import NullTerminalUI
 from ui_rich import RichTerminalUI
 
 
+def preparar_configuracion(args: Any, asic_model: str) -> Any:
+    """
+    Cargar, fusionar, validar y registrar la configuracion de un modelo de chip.
+
+    Extraido de `main()` para que `--dry-run` recorra exactamente el mismo
+    camino: si validara por otro lado, un dry-run en verde no diria nada del
+    arranque de verdad, que es lo unico para lo que sirve.
+
+    Args:
+        args (Any): Argumentos ya parseados (usa config, voltage, frequency,
+            sample_interval).
+        asic_model (str): Modelo de ASIC, del miner o de --asic.
+
+    Returns:
+        Tuple[Dict[str, Any], Dict[str, str]]: configuracion efectiva y la
+            procedencia de cada clave.
+
+    Raises:
+        SystemExit: Si falta un YAML o la configuracion no es valida.
+    """
+    asic_yaml = ruta_yaml_de_chip(asic_model)
+    config_loader = YamlConfigLoader()
+    config, procedencia = load_config_con_procedencia(
+        config_loader, asic_yaml, args.config
+    )
+    registrar_procedencia(procedencia, asic_yaml, args.config)
+
+    # Apply overrides. Se anota la procedencia de cada uno: sin esto la tabla de
+    # --dry-run atribuia al YAML un valor que venia de la linea de comandos, que
+    # es exactamente la confusion que la tabla existe para deshacer.
+    for opcion, clave, valor in (
+        ("--voltage", "INITIAL_VOLTAGE", args.voltage),
+        ("--frequency", "INITIAL_FREQUENCY", args.frequency),
+        ("--sample-interval", "SAMPLE_INTERVAL", args.sample_interval),
+    ):
+        if valor is not None:
+            config[clave] = valor
+            procedencia[clave] = f"{opcion} (linea de comandos)"
+
+    # validate_config recorta INITIAL_VOLTAGE e INITIAL_FREQUENCY al rango, y ese
+    # recorte es un tercer origen del valor: no lo escribio ningun YAML ni ningun
+    # argumento. Se detecta comparando, en vez de que clamp_initial_values
+    # devuelva la procedencia, para no cambiar la firma de una funcion que
+    # llaman los tests de limites.
+    antes = {k: config.get(k) for k in ("INITIAL_VOLTAGE", "INITIAL_FREQUENCY")}
+    validate_config(config)
+    for clave, valor_previo in antes.items():
+        if config.get(clave) != valor_previo:
+            procedencia[clave] = (
+                f"recortado al rango (se pidio {valor_previo}, "
+                f"ver {procedencia.get(clave, asic_yaml)})"
+            )
+    return config, procedencia
+
+
 def main() -> None:
     args = parse_arguments()
     handlers = [logging.FileHandler("bitaxepid_monitor.log")]
-    if args.log_to_console:
+    # En --dry-run el log va tambien a la terminal sin pedirlo: todo el modo
+    # existe para mostrar lo que se cargaria, y los avisos de claves ausentes o
+    # recortadas son parte de eso. Escondidos en el fichero no sirven de nada.
+    if args.log_to_console or args.dry_run:
         handlers.append(logging.StreamHandler())
     logging.basicConfig(
         level=logging.DEBUG if args.logging_level == "debug" else logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=handlers,
     )
+
+    # --dry-run sale ANTES de construir el cliente de la API. El orden no es
+    # cosmetico: BitaxeAPIClient abre la sesion HTTP en su constructor, asi que
+    # crearlo y salir despues ya habria hecho lo que este modo promete no hacer.
+    if args.dry_run:
+        config, procedencia = preparar_configuracion(args, args.asic)
+        imprimir_configuracion_efectiva(config, procedencia)
+        sys.exit(0)
 
     # Initialize the API client with enhanced settings
     api_client = BitaxeAPIClient(
@@ -63,22 +137,14 @@ def main() -> None:
         sys.exit(1)
 
     asic_model = system_info.get("ASICModel", "default")
-    asic_yaml = f"{asic_model}.yaml"
-    config_loader = YamlConfigLoader()
-    config = load_config(config_loader, asic_yaml, args.config)
+    config, _procedencia = preparar_configuracion(args, asic_model)
 
-    # Apply overrides (unchanged)
-    if args.voltage is not None:
-        config["INITIAL_VOLTAGE"] = args.voltage
-    if args.frequency is not None:
-        config["INITIAL_FREQUENCY"] = args.frequency
-    if args.sample_interval is not None:
-        config["SAMPLE_INTERVAL"] = args.sample_interval
-    validate_config(config)
-
-    serve_metrics = args.serve_metrics or config.get("METRICS_SERVE", False)
+    # Los defectos de las claves opcionales viven en config.CLAVES_OPCIONALES,
+    # no repetidos aqui: tenerlos en dos sitios permitia que el YAML documentara
+    # un numero y el codigo aplicara otro.
+    serve_metrics = args.serve_metrics or opcional(config, "METRICS_SERVE")
     config["METRICS_SERVE"] = serve_metrics
-    manage_pools = args.manage_pools or config.get("MANAGE_MINER_POOLS", False)
+    manage_pools = args.manage_pools or opcional(config, "MANAGE_MINER_POOLS")
     config["MANAGE_MINER_POOLS"] = manage_pools
 
     logger_instance = Logger(config["LOG_FILE"], config["SNAPSHOT_FILE"])
@@ -89,7 +155,7 @@ def main() -> None:
     # porcentaje de errores de hardware del miner. Por defecto sigue la
     # estrategia PID de siempre, para no cambiar el comportamiento de nadie que
     # no lo pida explicitamente.
-    if config.get("ERROR_TUNING", False):
+    if opcional(config, "ERROR_TUNING"):
         if "ERROR_TARGET_PERCENT" not in config:
             logging.error(
                 "ERROR_TUNING esta activado pero falta ERROR_TARGET_PERCENT: "
@@ -107,11 +173,12 @@ def main() -> None:
             target_temp=config["TARGET_TEMP"],
             power_limit=config["POWER_LIMIT"],
             error_target=config["ERROR_TARGET_PERCENT"],
-            error_hysteresis=config.get("ERROR_HYSTERESIS", 0.5),
-            error_window=config.get("ERROR_WINDOW", 7),
-            error_settle=config.get("ERROR_SETTLE", 3),
-            temp_margin=config.get("TEMP_MARGIN", 2.0),
-            retry_ceiling=config.get("ERROR_RETRY_CEILING", 50),
+            error_hysteresis=opcional(config, "ERROR_HYSTERESIS"),
+            error_window=opcional(config, "ERROR_WINDOW"),
+            error_settle=opcional(config, "ERROR_SETTLE"),
+            temp_margin=opcional(config, "TEMP_MARGIN"),
+            retry_ceiling=opcional(config, "ERROR_RETRY_CEILING"),
+            lower_voltage_after=opcional(config, "LOWER_VOLTAGE_AFTER"),
         )
         logging.info(
             f"Estrategia de estabilidad: objetivo {config['ERROR_TARGET_PERCENT']}% "
@@ -120,8 +187,10 @@ def main() -> None:
         )
     else:
         # Las ganancias PID_* y HASHRATE_SETPOINT ya no se pasan: no hay PID ni
-        # objetivo de hashrate. Siguen siendo claves obligatorias en los YAML
-        # (validate_config las exige) para no invalidar los ficheros existentes.
+        # objetivo de hashrate. Se siguen exigiendo en los YAML de ESTA rama
+        # (validate_config las pide cuando ERROR_TUNING esta desactivado) para no
+        # invalidar los ficheros existentes ni dejar huecos en las columnas del
+        # CSV con las que se comparan historiales antiguos.
         tuning_strategy = PIDTuningStrategy(
             min_voltage=config["MIN_VOLTAGE"],
             max_voltage=config["MAX_VOLTAGE"],
@@ -131,13 +200,15 @@ def main() -> None:
             frequency_step=config["FREQUENCY_STEP"],
             target_temp=config["TARGET_TEMP"],
             power_limit=config["POWER_LIMIT"],
-            temp_margin=config.get("TEMP_MARGIN", 2.0),
+            temp_margin=opcional(config, "TEMP_MARGIN"),
             # ERROR_TARGET_PERCENT es opcional aqui (a diferencia de la
             # estrategia de estabilidad, que sin el no puede decidir nada). Si
             # no esta, esta estrategia decide solo con temperatura y potencia.
+            # No lleva defecto en CLAVES_OPCIONALES a proposito: su ausencia
+            # significa "sin criterio de errores", no un numero concreto.
             error_target=config.get("ERROR_TARGET_PERCENT"),
-            error_hysteresis=config.get("ERROR_HYSTERESIS", 0.5),
-            estable_para_bajar=config.get("ERROR_SETTLE", 3),
+            error_hysteresis=opcional(config, "ERROR_HYSTERESIS"),
+            estable_para_bajar=opcional(config, "ERROR_SETTLE"),
         )
         logging.info(
             f"Estrategia por limites: temperatura objetivo {config['TARGET_TEMP']}C, "
@@ -162,14 +233,17 @@ def main() -> None:
         tuning_strategy=tuning_strategy,
         api_client=api_client,
         logger=logger_instance,
-        config_loader=config_loader,
+        # Instancia propia: YamlConfigLoader no tiene estado (es un open() y un
+        # yaml.safe_load()), asi que compartir la que usa la carga inicial no
+        # aportaba nada. TuningManager lo usa para releer pools.yaml y user.yaml.
+        config_loader=YamlConfigLoader(),
         terminal_ui=terminal_ui,
         sample_interval=config["SAMPLE_INTERVAL"],
         initial_voltage=config["INITIAL_VOLTAGE"],
         initial_frequency=config["INITIAL_FREQUENCY"],
         pools_file=args.pools_file if args.pools_file else config["POOLS_FILE"],
         config=config,
-        user_file=args.user_file if args.user_file else config.get("USER_FILE", None),
+        user_file=args.user_file if args.user_file else opcional(config, "USER_FILE"),
         primary_stratum=primary_stratum,
         backup_stratum=backup_stratum,
         manage_pools=manage_pools,
