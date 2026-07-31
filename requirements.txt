@@ -5,9 +5,19 @@
 
 pyyaml>=6.0             # carga de la configuracion y de pools.yaml
 urllib3>=1.26.0         # cliente HTTP contra la API del miner (BitaxeAPIClient)
-simple-pid>=1.0.1       # controladores PID de PIDTuningStrategy
 rich>=12.0.0            # interfaz de terminal (RichTerminalUI)
 pyfiglet>=0.8.post1     # banner ASCII de la interfaz de terminal
+
+# simple-pid ESTUVO AQUI y se ha quitado: no queda ningun controlador PID en el
+# programa. Ningun modulo importa simple_pid (comprobado con grep sobre todos los
+# .py), asi que declararlo hacia que el Containerfile lo instalara en el nodo
+# para no ejecutarlo nunca. Las dos estrategias deciden con reglas por
+# prioridad, no con un lazo PID; lo unico que sobrevive del PID son siete claves
+# de configuracion que solo rellenan columnas del CSV.
+#
+# Si algun dia se reintroduce un PID, hay que volver a declararlo aqui: la
+# comprobacion de scripts/smoke_test.sh solo exige el paquete cuando algun .py
+# importa el modulo, asi que no avisa por si sola de que falta.
 
 # Todo lo demas que usa el proyecto es biblioteca estandar y no se instala:
 # argparse, csv, http.server, json, logging, os, signal, socket, socketserver,

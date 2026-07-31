@@ -5,12 +5,18 @@
 ## Overview
 
 BitaxePID is an auto-tuning utility for Bitaxe open-source Bitcoin ASIC miners
-(BM1366, BM1368, BM1370 and BM1397). It optimizes miner performance by
-dynamically adjusting core voltage and frequency to hit a target hashrate while
-keeping temperature and power within limits. It uses dual PID controllers (via
-`simple-pid`) and provides a cyberpunk-themed TUI for real-time monitoring.
-Tuning data is logged to CSV and persisted to a JSON snapshot so a restart
-resumes where the previous run left off.
+(BM1366, BM1368, BM1370 and BM1397). It adjusts core voltage and frequency to
+find the fastest setting the chip sustains, keeping temperature, power and
+hardware error rate within limits. It provides a cyberpunk-themed TUI for
+real-time monitoring; tuning data is logged to CSV and persisted to a JSON
+snapshot.
+
+> **This fork no longer contains a PID controller.** Not one. The name is
+> historical. Hashrate is not a target either — it is a *result* of voltage and
+> frequency, so `HASHRATE_SETPOINT` is read by nothing and only fills a CSV
+> column. Two strategies are available and `ERROR_TUNING` selects between them;
+> see [Tuning strategies](#tuning-strategies). If you are looking for the
+> upstream PID behaviour, this is not it.
 
 ### Note
 
@@ -24,13 +30,13 @@ release for a version, or clone the main repo.
 ### Intent
 
 - **Performance optimization**: adjusts voltage and frequency within the limits
-  declared in the chip's YAML file to meet a user-defined hashrate setpoint
-  using PID control.
-- **Thermal and power management**: safety comes before the hashrate target. If
-  temperature exceeds `TARGET_TEMP` or power exceeds `POWER_LIMIT * 1.075`, the
-  tuner lowers settings even though that means missing the setpoint.
-- **Stability**: persists settings across runs with a snapshot file and resets
-  the PID controllers on stagnation.
+  declared in the chip's YAML file, looking for the highest sustainable frequency
+  and the lowest voltage that holds it.
+- **Thermal and power management**: safety comes first. If temperature exceeds
+  `TARGET_TEMP` or power exceeds `POWER_LIMIT * 1.075`, the tuner lowers settings
+  regardless of what that costs in hashrate.
+- **Stability**: decisions are made on a rolling median of the miner's hardware
+  error rate, not on a single reading, because that signal is noisy.
 - **Non-intrusive by default**: BitaxePID does not touch the miner's stratum
   pool configuration unless you explicitly allow it. See
   [Pool management](#pool-management).
@@ -51,11 +57,14 @@ The Bitaxe family (values below for the Ultra/Supra class boards):
 
 - **Model-specific configuration**: one YAML per ASIC model, plus an optional
   user YAML that overrides individual keys via `--config`.
-- **PID control**: two controllers, one for frequency and one for voltage, with
-  gains defined per model in the YAML file.
+- **Two tuning strategies**: selected by `ERROR_TUNING`. See
+  [Tuning strategies](#tuning-strategies).
 - **Safety constraints**: respects the power limit and the voltage/frequency
   bounds of the configured chip.
-- **Snapshot persistence**: saves settings to `bitaxepid_snapshot_<model>.json`.
+- **Snapshot**: writes the last applied pair to
+  `bitaxepid_snapshot_<model>.json`. Note it is **written but never read back** —
+  every run starts from `INITIAL_VOLTAGE`/`INITIAL_FREQUENCY`, not from where the
+  previous one stopped.
 - **TUI display**: cyberpunk-style interface with ANSI-art GH/s, system stats,
   progress bars and a scrolling log. `--log-to-console` disables it.
 - **Logging**: `bitaxepid_monitor.log` plus a CSV tuning log.
@@ -101,10 +110,11 @@ docker compose logs -f
 Spanish: what the startup log should look like, how to check the limits are
 actually in place, and what is verified and what is not.
 
-`docker compose down` stops it. The default profile is `safe-BM1370.yaml`
-(conservative limits, see below); change `BITAXEPID_CONFIG` in `.env` for a
-different one, or unset it to use the factory limits of whichever chip the miner
-reports.
+`docker compose down` stops it. The default profile is
+`safe-BM1370-estabilidad.yaml` (stability strategy, see below); change
+`BITAXEPID_CONFIG` in `.env` for a different one. Unsetting it is a bad idea: you
+get the factory limits of whichever chip the miner reports, with `ERROR_TUNING`
+undeclared and therefore the other strategy.
 
 The tuning CSV and the snapshot are written to `./data`, which is mounted into
 the container, so they survive `docker compose down`. Metrics are published on
@@ -144,12 +154,17 @@ passed with `--config` on top of `BM1370.yaml`:
 python bitaxepid.py --ip 192.168.68.111 --config safe-BM1370.yaml
 ```
 
-It caps frequency at 500 MHz (factory 625) and voltage at 1150 mV (factory
-1250), targets 55 °C, and lowers `HASHRATE_SETPOINT` to something reachable
-within those caps — an unreachable setpoint keeps the PID asking for more
-forever and pins it against the voltage ceiling for nothing. Write your own
-profile the same way for a different chip; every key it does not declare is
-inherited from the chip YAML.
+It caps frequency at 500 MHz (factory 625) and voltage at 1150 mV (factory 1250),
+targets 55 °C, and declares **all four** bounds rather than only the two maxima.
+That matters: every key a profile does not declare is inherited from the chip
+YAML, so declaring only the ceilings left the floors at the factory 1000 mV /
+400 MHz — an effective range of 1000-1150 mV in a profile called "safe". The floor
+is where the minimum-voltage search and the thermal branch bottom out, and a
+BM1370 does not mine stably at 1000 mV.
+
+`safe-BM1370-estabilidad.yaml` is the other profile, and the default for
+`docker compose`: it declares all 32 readable keys explicitly (inheriting
+nothing), runs the stability strategy, and is the one tested on real hardware.
 
 A profile passed with `--config` must exist and must be readable: the program
 exits rather than falling back to the chip defaults, because silently running
@@ -248,12 +263,22 @@ Default settings come from the ASIC model YAML file (`BM1366.yaml`,
 keys override the model defaults. Command-line options such as `--voltage`,
 `--frequency` and `--sample-interval` override both.
 
-The following keys are mandatory; the program exits if any is missing:
+The following 14 keys are mandatory; the program exits if any is missing:
 `INITIAL_VOLTAGE`, `INITIAL_FREQUENCY`, `SAMPLE_INTERVAL`, `LOG_FILE`,
-`SNAPSHOT_FILE`, `POOLS_FILE`, `PID_FREQ_KP`, `PID_FREQ_KI`, `PID_FREQ_KD`,
-`PID_VOLT_KP`, `PID_VOLT_KI`, `PID_VOLT_KD`, `MIN_VOLTAGE`, `MAX_VOLTAGE`,
-`MIN_FREQUENCY`, `MAX_FREQUENCY`, `VOLTAGE_STEP`, `FREQUENCY_STEP`,
-`HASHRATE_SETPOINT`, `TARGET_TEMP`, `POWER_LIMIT`.
+`SNAPSHOT_FILE`, `POOLS_FILE`, `MIN_VOLTAGE`, `MAX_VOLTAGE`, `MIN_FREQUENCY`,
+`MAX_FREQUENCY`, `VOLTAGE_STEP`, `FREQUENCY_STEP`, `TARGET_TEMP`, `POWER_LIMIT`.
+
+With `ERROR_TUNING` off, seven more are required: `PID_FREQ_KP/KI/KD`,
+`PID_VOLT_KP/KI/KD` and `HASHRATE_SETPOINT`. **Nothing reads them to decide
+anything** — they only fill seven CSV columns, kept so a new history stays
+comparable with older ones on that strategy. They are not required with
+`ERROR_TUNING: TRUE`.
+
+Everything else is optional and falls back to a default declared in one place,
+`CLAVES_OPCIONALES` in `config.py`. Startup logs a warning listing every optional
+key you did not declare and the value it will use instead. `ERROR_TUNING` gets a
+warning of its own, because its default is `FALSE` — that is not a nuance, it is
+the *other strategy*.
 
 ### Example configuration file (`BM1366.yaml`)
 
@@ -287,45 +312,49 @@ USER_FILE: "user.yaml"       # only used if stratumUser is blank on the Bitaxe
 # BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
 ```
 
-## What is a PID controller?
+## Tuning strategies
 
-A PID controller is a widely used feedback system that continuously adjusts a
-process to reach a desired target by combining three actions: the proportional
-term, which reacts to the current error between the setpoint and the measured
-value; the integral term, which accumulates past errors to eliminate
-steady-state discrepancies; and the derivative term, which predicts future
-errors based on the rate of change. This blend of immediate response, historical
-correction and predictive adjustment improves stability and performance across
-many applications — from motor speed control to temperature regulation.
+There is no PID controller in this fork. `ERROR_TUNING` picks one of two
+rule-based strategies. Neither one targets a hashrate.
 
-## What is `simple-pid`?
-
-`simple-pid` is a Python library that implements a PID controller. In this
-project:
-
-- **How it works**: the controller computes an adjustment from the error
-  (difference between current hashrate and setpoint), using the proportional
-  term to react to the present error, the integral term to correct persistent
-  deviations, and the derivative term to dampen overshoots.
-- **Role**: two PID instances (`pid_freq` and `pid_volt`) adjust frequency and
-  voltage respectively to stabilize hashrate while respecting hardware limits.
-  The conservative gains keep changes smooth despite discrete steps and hardware
-  delays.
-
-### Behavior
-
-PID output drives the hashrate towards the setpoint, but it is overridden when
-temperature exceeds `TARGET_TEMP` or power exceeds `POWER_LIMIT * 1.075`, in
-which case voltage or frequency come down. Prolonged stagnation resets the
-controllers to escape a plateau. Every decision is printed with its reason, so
+Every decision is printed with its reason (in Spanish, via `rich` on stdout), so
 you can see why the tuner moved.
 
-Gains, steps and limits live in the model YAML file; tune them there rather than
-in the code.
+### `ERROR_TUNING: TRUE` — stability search (`tuning_estabilidad.py`)
+
+The recommended one, and the only one tested on real hardware. A state machine:
+
+1. **RAMPA** — raise voltage to `MAX_VOLTAGE`, then walk frequency up one
+   `FREQUENCY_STEP` per sample until `TARGET_TEMP` stops it. That is the highest
+   and most stable point available.
+2. **BUSCAR_VOLTAJE** — lower voltage step by step until the hardware error rate
+   reaches `ERROR_TARGET_PERCENT`, then back off one step. What remains is the
+   *minimum* voltage that meets the target.
+3. **OPTIMIZAR** — errors above target raise voltage; comfortable thermal margin
+   raises frequency; and only with frequency already at the ceiling does it keep
+   trying to lower voltage further.
+
+Decisions use the **median** of the last `ERROR_WINDOW` samples, discarding
+`ERROR_SETTLE` samples after each change. The miner's `errorPercentage` is noisy
+enough that a single reading crosses any threshold in both directions.
+
+### `ERROR_TUNING` absent or `FALSE` — limit-based (`tuning.py`)
+
+Despite the `PIDTuningStrategy` class name, no PID. Five rules by priority:
+
+1. Temperature above `TARGET_TEMP` → lower frequency (then voltage, if frequency
+   is already at the floor).
+2. Power above `POWER_LIMIT * 1.075` → lower voltage.
+3. Errors above `ERROR_TARGET_PERCENT` → raise voltage.
+4. Thermal margin available → raise frequency.
+5. Several stable samples in a row → lower voltage, looking for the minimum.
+
+Steps and limits live in the model YAML file; tune them there rather than in the
+code.
 
 ## Architecture
 
-Eleven flat modules, one responsibility each, no subpackages and no abstract
+Twelve flat modules, one responsibility each, no subpackages and no abstract
 base class layer:
 
 | Module | Responsibility |
@@ -335,7 +364,8 @@ base class layer:
 | `config.py` | Loads and validates the YAML configuration. |
 | `api_client.py` | HTTP client for the miner's API (`urllib3`). |
 | `stratum.py` | Pool file handling, endpoint parsing and latency measurement. |
-| `tuning.py` | The PID strategy: decides the next voltage/frequency pair. |
+| `tuning.py` | Limit-based strategy (`ERROR_TUNING` off): decides the next voltage/frequency pair. |
+| `tuning_estabilidad.py` | Stability strategy (`ERROR_TUNING: TRUE`), the default. |
 | `tuning_manager.py` | The tuning loop and the startup sequence. |
 | `logger.py` | CSV tuning log and JSON snapshot. |
 | `metrics_server.py` | Optional HTTP metrics endpoint on port 8093. |
@@ -351,6 +381,7 @@ graph TD
     main --> config[config.py]
     main --> api[api_client.py]
     main --> tuning[tuning.py]
+    main --> test[tuning_estabilidad.py]
     main --> tm[tuning_manager.py]
     main --> logger[logger.py]
     main --> metrics[metrics_server.py]
@@ -363,9 +394,11 @@ graph TD
     tm --> metrics
     tm --> config
     tm --> tuning
+    tm --> test
     tm --> uirich
     tm --> uinull
     tuning --> uirich
+    test --> uirich
 ```
 
 Startup order matters and is explicit: constructing a `TuningManager` has no
@@ -391,8 +424,16 @@ python -m unittest discover -s tests -t .
 checks by AST analysis that no module uses a name it neither defines nor imports
 (the failure mode of moving code between files), validates the configuration
 files against the keys the code actually requires, checks `requirements.txt`
-coverage and then runs the unit tests. Checks that need third-party packages are
-skipped, not failed, when those packages are absent.
+**both ways** (nothing imported is undeclared, and nothing declared goes
+unimported — the `Containerfile` installs that file verbatim, so a stale entry
+ships a package that never runs) and then runs the unit tests. Checks that need
+third-party packages are skipped, not failed, when those packages are absent.
+
+On Windows, where the interpreter is `python` rather than `python3`:
+
+```bash
+PYTHON=python bash scripts/smoke_test.sh
+```
 
 ```bash
 bash scripts/smoke_test.sh
@@ -403,5 +444,6 @@ bash scripts/smoke_test.sh
 Based on concepts and code from
 [Hurllz/bitaxe-temp-monitor](https://github.com/Hurllz/bitaxe-temp-monitor/).
 
-Extensively refactored to integrate `simple-pid` for advanced control and to
-split the codebase into single-responsibility modules.
+Extensively refactored: split into single-responsibility modules, and later
+rewritten to drop the PID controllers and the hashrate setpoint in favour of the
+two rule-based strategies described above.

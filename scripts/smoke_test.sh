@@ -118,7 +118,11 @@ done <<< "$libres"
 echo
 echo "dependencias:"
 DEPS_OK=1
-for mod in rich simple_pid pyfiglet urllib3 yaml; do
+# simple_pid ya no esta en la lista: no queda ningun PID en el programa y nadie
+# lo importa. Dejarlo tenia un efecto peor que el ruido: al no instalarse ya con
+# requirements.txt, ponia DEPS_OK a 0 y con eso se SALTABAN los imports del
+# proyecto, la CLI y la suite entera, sin marcar un solo fallo.
+for mod in rich pyfiglet urllib3 yaml; do
   if "$PY" -c "import $mod" 2>/dev/null; then
     ok "import $mod"
   else
@@ -378,10 +382,20 @@ COMPOSEEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 5. requirements.txt debe cubrir lo que el codigo importa de terceros.
+# 5. requirements.txt y los imports del codigo tienen que coincidir EN LOS DOS
+#    SENTIDOS.
+#
 #    Nota: el nombre del paquete en PyPI no siempre coincide con el del modulo
 #    (simple-pid -> simple_pid, pyyaml -> yaml), asi que la comparacion
 #    normaliza guiones y guiones bajos.
+#
+#    La segunda direccion se anadio porque faltaba: requirements.txt declaraba
+#    simple-pid mucho despues de que el fork se quedara sin ningun PID, y nada lo
+#    detectaba. El Containerfile instala este fichero tal cual, asi que una
+#    dependencia declarada y no importada se instala en el nodo para no
+#    ejecutarse nunca. El par simple_pid:simple-pid se deja en la lista a
+#    proposito: si algun dia vuelve un PID, la primera direccion avisa de que
+#    hay que declararlo.
 # ---------------------------------------------------------------------------
 echo
 echo "requirements.txt:"
@@ -401,6 +415,22 @@ if [ -f "$ROOT/requirements.txt" ]; then
     ok "declara todo lo que el codigo importa"
   else
     bad "no declara:$missing_req"
+  fi
+
+  # La direccion contraria: declarado y no importado por nadie.
+  sobra_req=""
+  for pair in "rich:rich" "simple_pid:simple-pid" "yaml:pyyaml" "urllib3:urllib3" "pyfiglet:pyfiglet"; do
+    mod="${pair%%:*}"; pkg="${pair##*:}"
+    if grep -qx "$pkg" <<< "$declared"; then
+      if ! grep -rqE "^[[:space:]]*(import|from)[[:space:]]+$mod\b" "$ROOT"/*.py 2>/dev/null; then
+        sobra_req="$sobra_req $pkg"
+      fi
+    fi
+  done
+  if [ -z "$sobra_req" ]; then
+    ok "no declara nada que el codigo no importe"
+  else
+    bad "declara sin usar (el Containerfile lo instalaria):$sobra_req"
   fi
 else
   bad "falta requirements.txt"

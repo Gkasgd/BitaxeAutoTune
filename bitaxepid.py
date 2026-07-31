@@ -15,7 +15,7 @@ Usage:
     python bitaxepid.py --ip <miner_ip> [--pools-file pools2.yaml] [--logging-level debug] [--serve-metrics] [--manage-pools]
 
 Dependencies:
-    - Terceros: rich, pyyaml, simple_pid, pyfiglet, urllib3
+    - Terceros: rich, pyyaml, pyfiglet, urllib3
     - Estandar: logging, signal, sys, typing
 """
 

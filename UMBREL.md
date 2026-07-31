@@ -8,6 +8,19 @@ Umbrel.** Lo he verificado contra un miner simulado y sin poder construir la
 imagen del contenedor (el entorno donde lo preparé no tiene Docker ni red). Al
 final hay una lista de qué está comprobado y qué no.
 
+> **Aviso: este documento describe `safe-BM1370.yaml`, que ya no es el perfil por
+> defecto.** Hoy `docker-compose.yml` y `.env.example` cargan
+> `safe-BM1370-estabilidad.yaml`, que es otra cosa: estrategia de estabilidad
+> (`ERROR_TUNING: TRUE`, decide con temperatura y errores de hardware y busca el
+> voltaje mínimo que aguanta), límites 1180-1210 mV / 475-925 MHz y 60 °C de
+> objetivo. Es el recomendado y el único probado en hardware real.
+>
+> Todo lo de aquí sigue siendo cierto **si pasas `--config safe-BM1370.yaml`**, o
+> pones ese valor en `BITAXEPID_CONFIG`. Los números concretos que verás abajo
+> (55 °C, 500 MHz, 1150 mV, arranque en 1100/450) son los de ese perfil, no los
+> del default actual. Los pasos de puesta en marcha, la comprobación de límites
+> por `:8093/metrics` y la sección de problemas valen para los dos.
+
 ## Antes de empezar
 
 Dale al miner una **IP fija** (reserva DHCP en el router). El contenedor no
@@ -29,10 +42,15 @@ cd BitaxePID
 
 cp .env.example .env
 nano .env          # pon la IP de tu miner en BITAXEPID_MINER_IP
+                   # y, para seguir este documento, BITAXEPID_CONFIG=safe-BM1370.yaml
 
 docker compose up -d --build
 docker compose logs -f
 ```
+
+Si dejas `BITAXEPID_CONFIG` como viene, cargará el perfil de estabilidad y el log
+de arranque no será el de abajo: verás `1185mV / 475MHz` en vez de
+`1100mV / 450MHz`, y líneas de estado `RAMPA:` que esta estrategia no tiene.
 
 En el log tienen que aparecer, en este orden:
 
@@ -87,9 +105,16 @@ y 10 mV). Muestrea cada 60 segundos, así que reacciona en minutos, no en
 segundos.
 
 Cada decisión sale en el log, pero sin marca de tiempo: esas líneas van por
-stdout y no por el logger. Son las que empiezan por `Reducing frequency to...`,
-`Increasing voltage to...` o `System stable at...`. Ver `System stable` repetido
-es la señal de que ha encontrado su punto.
+stdout (`console.print` de `rich`) y no por el logger. Están **en castellano**:
+`Bajando frecuencia a 475MHz por temperatura...`, `Subiendo voltaje a 1150mV por
+errores...`, `Estable en 1100mV/500MHz`. Ver `Estable en` repetido es la señal de
+que ha encontrado su punto.
+
+Si vas a buscarlas con `grep`, hazlo por el trozo **anterior al primer número**:
+el texto lleva valores interpolados en medio, así que una frase entera copiada de
+aquí puede no encontrar nada. `grep "Bajando frecuencia"` funciona;
+`grep "Bajando frecuencia a 475MHz por temperatura"` depende de que ese sea justo
+el valor de esa muestra.
 
 Los topes son duros en los dos caminos que escriben al hardware: el valor
 inicial y cada propuesta del bucle. Si pides algo fuera de rango, lo recorta y lo
@@ -114,13 +139,19 @@ qué. Los que probablemente querrás tocar:
 | `TARGET_TEMP` | 55.0 | Temperatura objetivo |
 | `MAX_FREQUENCY` | 500 | Tope de frecuencia |
 | `MAX_VOLTAGE` | 1150 | Tope de voltaje |
-| `HASHRATE_SETPOINT` | 400 | Objetivo del PID, en GH/s |
+| `MIN_FREQUENCY` | 425 | Suelo: hasta dónde baja la rama térmica |
+| `MIN_VOLTAGE` | 1100 | Suelo del voltaje |
 | `SAMPLE_INTERVAL` | 60 | Segundos entre muestras |
 | `POWER_LIMIT` | 13.0 | Actúa alrededor de 14 W (se compara contra `POWER_LIMIT * 1.075`) |
 
-Un aviso sobre `HASHRATE_SETPOINT`: si lo pones por encima de lo que se puede
-alcanzar dentro de los topes, el PID pide más para siempre y se queda pegado al
-techo de voltaje sin ganar hashrate. Con 500 MHz de tope, 400 es razonable.
+Los **cuatro** extremos están declarados en el perfil a propósito. Todo lo que no
+declare se hereda de `BM1370.yaml`, o sea de fábrica, y eso incluía los suelos:
+antes este perfil solo bajaba los máximos y su rango efectivo era 1000-1150 mV,
+que no es lo que promete un perfil llamado «safe».
+
+`HASHRATE_SETPOINT` sigue en el fichero pero **no se lee**. Ninguna de las dos
+estrategias mira el hashrate: es un resultado de la frecuencia y el voltaje, no un
+objetivo. Solo rellena una columna del CSV; cambiarlo no tiene ningún efecto.
 
 Después de editar: `docker compose restart`.
 
@@ -143,7 +174,7 @@ límites de fábrica creyendo que estaba limitado.
 `BITAXEPID_METRICS_PORT` en `.env` y `docker compose up -d`.
 
 **Temperaturas por encima de 55 °C y no bajan.** Mira si la frecuencia está ya
-en `MIN_FREQUENCY` (400) y el voltaje en `MIN_VOLTAGE` (1000): si el tuner llegó
+en `MIN_FREQUENCY` (425) y el voltaje en `MIN_VOLTAGE` (1100): si el tuner llegó
 al suelo y sigue caliente, el problema es de refrigeración, no de configuración.
 Ningún ajuste de software lo arregla.
 
@@ -181,9 +212,11 @@ Verificado contra un miner simulado que responde como la API real, con
 - **Umbrel.** No he ejecutado nada en un Umbrel. El compose es estándar y no
   necesita privilegios, pero no es una app del store de Umbrel: es un
   `docker compose` que lanzas por SSH.
-- **Las dependencias reales.** `rich`, `simple_pid` y `pyfiglet` eran stubs. El
-  comportamiento del PID que he medido es el del stub, no el de `simple-pid`. La
-  forma de las curvas puede diferir; los topes no, porque el recorte es
-  independiente del controlador.
+- **Las dependencias reales.** `rich` y `pyfiglet` eran stubs, así que lo medido
+  es el comportamiento con ellos simulados. Los topes no dependen de eso: el
+  recorte a los límites es aritmética en `config.py` y en `apply_strategy`, y no
+  pasa por ninguna biblioteca de terceros. (`simple-pid` figuraba aquí y ya no:
+  se quitó de `requirements.txt` porque no queda ningún PID en el programa y
+  nadie lo importaba.)
 - **La primera media hora.** Déjalo con `docker compose logs -f` delante y mira
   las temperaturas de verdad antes de irte.
