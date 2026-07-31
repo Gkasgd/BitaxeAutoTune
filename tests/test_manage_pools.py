@@ -242,9 +242,13 @@ class TestNoSeVersionaUnaDireccionDePago(unittest.TestCase):
     la API del miner. Pero era una trampa armada: en ese caso el hashrate se
     habria ido a esa direccion sin que nada lo dijera.
 
-    Ahora las claves van vacias, y con --manage-pools el arranque termina en
-    "Stratum users missing" sin tocar el miner. Es el resultado correcto: sin
-    usuario el miner no mina de todas formas.
+    Estuvieron vacias un tiempo, y con --manage-pools el arranque terminaba en
+    "Stratum users missing" sin tocar el miner. Ahora traen la direccion del
+    dueño del fork, por decision suya: para el es lo comodo, porque clona y
+    funciona. Lo que se conserva de aquello es el limite real, que no era "no
+    versionar direcciones" sino "no versionar la de otro, y menos en silencio":
+    de ahi que un test compruebe de quien es la direccion y otro que el aviso
+    para cambiarla siga en el fichero.
     """
 
     # Trozo de la direccion original, para que el test la reconozca si vuelve.
@@ -262,20 +266,47 @@ class TestNoSeVersionaUnaDireccionDePago(unittest.TestCase):
             with self.subTest(clave=clave):
                 self.assertNotIn(self.HEREDADA, str(valor))
 
-    def test_ninguna_clave_trae_una_direccion(self):
-        """Mas ancho que el test anterior: cualquier direccion, no solo esa. Un
-        fork publico no debe versionar la de nadie, ni la del upstream ni la del
-        que lo mantiene."""
+    # Trozo de la direccion del dueño del fork, que es la que se versiona.
+    DEL_DUENO = "bc1qatdwu9mrx4uq8sslhex8gsg5lk39cyxvu3y0lxplk46vxdzmgmpqjsqg93"
+
+    def test_si_hay_direccion_es_la_del_dueno(self):
+        """El fichero se versiona con la direccion del dueño del fork: es su
+        decision, y para el es lo comodo porque clona y funciona.
+
+        Lo que este test impide es que sea la de OTRO. La distincion importa
+        porque el fallo de partida no fue "hay una direccion", fue "hay una
+        direccion ajena y nadie lo dice": venia la del upstream, heredada, y con
+        --manage-pools el hashrate se le iba a un tercero.
+        """
         data = yaml.safe_load(self._cargar())
         for clave, valor in data.items():
             with self.subTest(clave=clave):
                 texto = str(valor or "")
-                for prefijo in ("bc1", "1", "3", "tb1"):
-                    if texto.startswith(prefijo) and len(texto) > 20:
-                        self.fail(
-                            f"{clave} parece traer una direccion: {texto!r}. "
-                            "Debe ir vacia en el repositorio."
-                        )
+                if not texto:
+                    continue
+                if any(
+                    texto.startswith(p) and len(texto) > 20
+                    for p in ("bc1", "1", "3", "tb1")
+                ):
+                    self.assertIn(
+                        self.DEL_DUENO,
+                        texto,
+                        f"{clave} trae una direccion que no es la del dueño del "
+                        f"fork: {texto!r}. O se vacia, o se pone la propia.",
+                    )
+
+    def test_el_fichero_avisa_de_que_hay_que_cambiarla(self):
+        """Versionar una direccion es admisible; hacerlo en silencio no.
+
+        Quien clone y arranque con --manage-pools contra un miner sin usuario
+        configurado minaria a la direccion de otro, y no hay ninguna linea de log
+        que lo diga. El aviso en el fichero es lo unico que lo evita, asi que
+        forma parte del contenido y no es decoracion: si alguien reescribe
+        user.yaml y se lo lleva por delante, este test lo para.
+        """
+        texto = self._cargar()
+        self.assertIn("CAMBIA ESTAS DOS LINEAS", texto)
+        self.assertIn("--manage-pools", texto)
 
     def test_las_dos_claves_siguen_declaradas(self):
         """Vaciarlas si, borrarlas no: load_config avisa si el YAML esta vacio, y

@@ -1,5 +1,11 @@
 # Direccion de pago para los pools stratum.
 #
+# ==========================================================================
+# SI CLONASTE ESTE REPOSITORIO, CAMBIA ESTAS DOS LINEAS POR TU DIRECCION.
+# La que viene es la del dueño del fork. Con --manage-pools y un miner que
+# reporte stratumUser vacio, el hashrate iria a esa direccion, no a la tuya.
+# ==========================================================================
+#
 # ESTE FICHERO SOLO SE LEE EN UN CASO, y con la configuracion por defecto no se
 # lee nunca:
 #
@@ -9,18 +15,16 @@
 #   2. el miner tiene que reportar stratumUser vacio en su API. Si ya tiene un
 #      usuario configurado desde AxeOS, ese gana y esto se ignora.
 #
-# Venia con una direccion del proyecto original (bc1qx6uq...), heredada del
-# upstream y NO del dueño de este fork. Estaba versionada y era la que se habria
-# enviado al miner en ese caso, o sea que el hashrate habria ido a un tercero.
-# Se deja vacia a proposito: es mejor que el programa no arranque que minar a una
-# direccion ajena sin avisar.
+# Asi que en la mayoria de instalaciones esto es inerte. Pero cuando se cumplen
+# las dos condiciones decide a donde va el hashrate, y lo hace en silencio: no
+# hay ninguna linea de log que diga "voy a minar a esta direccion". De ahi el
+# aviso de arriba.
 #
-# Con los campos vacios y --manage-pools activo, el arranque termina con
-# "Stratum users missing" y no toca el miner. Para usarlo, pon tu propia
-# direccion; el sufijo despues del punto es el nombre del worker.
+# El sufijo despues del punto es el nombre del worker, y es libre.
+#
 # Hay que rellenar LAS DOS. El respaldo "si el fallback esta vacio usa el
 # primario" de tuning_manager.py no llega a actuar: es el defecto de un .get() y
 # _load_stratum_users siempre devuelve la clave, con "" cuando falta, asi que el
-# vacio gana y el arranque aborta igual.
-stratumUser: ""
-fallbackStratumUser: ""
+# vacio gana y el arranque aborta con "Stratum users missing".
+stratumUser: bc1qatdwu9mrx4uq8sslhex8gsg5lk39cyxvu3y0lxplk46vxdzmgmpqjsqg93.gkasgd
+fallbackStratumUser: bc1qatdwu9mrx4uq8sslhex8gsg5lk39cyxvu3y0lxplk46vxdzmgmpqjsqg93.gkasgd

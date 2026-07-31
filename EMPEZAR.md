@@ -130,8 +130,10 @@ Cada una dice algo que conviene entender:
 - **La tercera** es la razón de que no necesites `pools.yaml` ni `user.yaml`: por
   defecto el programa **no toca la configuración de pools de tu miner**. Sigue
   minando donde ya minaba. Solo con `--manage-pools` entran en juego esos dos
-  ficheros, y `user.yaml` viene **vacío a propósito**, así que en ese caso el
-  arranque termina en `Stratum users missing` hasta que pongas tu dirección.
+  ficheros. **Y `user.yaml` viene con la dirección Bitcoin del dueño del fork**,
+  así que si lo activas sin editarlo y tu miner no tiene usuario configurado en
+  AxeOS, minarías a esa dirección y no a la tuya. No hay ninguna línea de log que
+  lo diga. Edita `user.yaml` antes de usar `--manage-pools`.
 - **La cuarta** es la primera escritura al hardware: el suelo del perfil,
   1185 mV / 475 MHz. Si ves `1150mV, 550MHz` estás con los valores de fábrica.
 

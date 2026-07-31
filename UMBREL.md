@@ -192,8 +192,9 @@ WARNING - INITIAL_VOLTAGE=1250.0mV esta fuera del rango 1180-1210mV
 **No toca la configuración de pools de tu miner** y no lo reinicia al arrancar.
 Si algún día quieres lo contrario, añade `--manage-pools` al `command` del
 compose; es mejor eso que dejarlo activado en un fichero. Ojo: entonces entra en
-juego `user.yaml`, que viene **vacío a propósito** y hará que el arranque termine
-en `Stratum users missing` hasta que pongas tu dirección de pago.
+juego `user.yaml`, que viene **con la dirección del dueño del fork**: si tu miner
+no tiene usuario configurado en AxeOS, minarías ahí y no a tu dirección, y nada
+en el log lo dice. Edítalo antes.
 
 ## Comprobar que los límites están puestos
 
