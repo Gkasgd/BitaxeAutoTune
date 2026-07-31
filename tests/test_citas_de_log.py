@@ -64,6 +64,62 @@ def fuentes():
 FUENTES = fuentes()
 
 
+def documentos():
+    """Todos los .md del arbol, no solo los tres que se revisaron a mano.
+
+    APLICAR.md se escapo de la primera version de este fichero justamente por
+    estar en un subdirectorio y sin seguimiento en git: la suite pasaba en verde
+    con una frase inventada dentro. Mejor recorrer todo lo que haya.
+    """
+    paths = sorted(glob.glob(os.path.join(REPO_ROOT, "*.md")))
+    paths += sorted(glob.glob(os.path.join(REPO_ROOT, "*", "*.md")))
+    leeme = os.path.join(BUNDLE, "LEEME.md")
+    if os.path.exists(leeme):
+        paths.append(leeme)
+    # docs/ suele traer material de upstream que no describe este fork.
+    return [p for p in paths if os.sep + "docs" + os.sep not in p]
+
+
+# Marcas de que el texto DESMIENTE la frase citada, en vez de mandar buscarla.
+#
+# Cuidado al ampliar esta lista: tiene que seguir dando False sobre el texto que
+# tenia APLICAR.md antes del arreglo, y lo comprueba
+# TestLaExcepcionNoEsDemasiadoAncha. Una marca como "ya no" no vale, porque
+# aparece dentro de la propia frase inventada ("el voltaje ya no puede bajar").
+# Ojo con los acentos: el codigo va sin ellos y el Markdown con ellos, asi que
+# cada marca se declara en las dos formas o se recorta antes del acento.
+MARCAS_EXPLICATIVAS = (
+    "no existe en ning",  # ningun / ningún
+    "no existe en el c",  # codigo / código
+    "**no existe**",
+    "no est",  # no estan / no están en ningun .py
+    "no lo emite",
+    "no escribe",
+    "se quit",  # se quito, se quitaron
+    "promet",  # prometia
+    "invent",
+    "al rev",  # al reves de como decia
+    "documento hist",  # historico / histórico
+    "vac",  # vacio / vacío siempre
+    "ni antes ni ahora",
+)
+
+
+def explicativo(contenido, pos, ventana=400):
+    """True si alrededor de pos se explica que la frase no existe.
+
+    Sin esto el test prohibiria hablar del fallo, que es justo lo que el LEEME y
+    el propio APLICAR.md tienen que hacer para explicarlo.
+    """
+    trozo = contenido[max(0, pos - ventana) : pos + ventana].lower()
+    return any(m in trozo for m in MARCAS_EXPLICATIVAS)
+
+
+def contexto(contenido, pos, ancho=90):
+    """Un trozo corto para el mensaje de fallo, sin volcar el fichero entero."""
+    return contenido[max(0, pos - ancho // 2) : pos + ancho].replace("\n", " ")
+
+
 def normalizar(texto):
     """Quitar los saltos de linea y la sangria que parten los f-strings.
 
@@ -106,18 +162,27 @@ class TestLosStringsEnInglesYaNoEstan(unittest.TestCase):
             )
 
     def test_no_los_promete_la_documentacion(self):
-        """El fallo real: UMBREL.md mandaba buscar los tres primeros."""
-        for doc in ("README.md", "UMBREL.md"):
-            path = os.path.join(REPO_ROOT, doc)
+        """El fallo real: UMBREL.md mandaba buscar los tres primeros.
+
+        Mencionarlos para explicar que se quitaron es legitimo, y el LEEME lo
+        hace en el hallazgo 13. Lo que no vale es presentarlos como algo que el
+        usuario vera en el log.
+        """
+        for path in documentos():
             with open(path, encoding="utf-8") as fh:
                 contenido = fh.read()
+            nombre = os.path.relpath(path, REPO_ROOT)
             for texto in self.FANTASMAS:
-                self.assertNotIn(
-                    texto,
-                    contenido,
-                    f"{doc} cita '{texto}', que el programa no emite: "
-                    "un grep del usuario saldria vacio",
-                )
+                desde = 0
+                while (i := contenido.find(texto, desde)) != -1:
+                    desde = i + 1
+                    if explicativo(contenido, i):
+                        continue
+                    self.fail(
+                        f"{nombre} cita '{texto}' como algo que se vera en el "
+                        f"log, y el programa no lo emite: el grep saldria "
+                        f"vacio. Contexto: ...{contexto(contenido, i)}..."
+                    )
 
 
 class TestLasCitasDelLEEMEExisten(unittest.TestCase):
@@ -206,6 +271,198 @@ class TestLasCitasDeUmbrelExisten(unittest.TestCase):
         for cita in ("Bajando frecuencia a", "Estable en"):
             self.assertIn(cita, contenido)
             self.assertIn(cita, FUENTES_PEGADAS, f"'{cita}' no lo emite el codigo")
+
+
+class TestNingunDocumentoInventaMensajes(unittest.TestCase):
+    """El caso de APLICAR.md, generalizado a todos los .md.
+
+    Ese documento mandaba buscar en el log "el voltaje ya no puede bajar sin
+    pasarse del ...% de errores". La frase no existe ni existio nunca en ningun
+    .py. Y catorce lineas mas abajo ofrecia un `git revert` de cuatro commits,
+    asi que la conclusion falsa ("el arreglo no esta") llevaba derecha a la
+    accion destructiva sobre un miner encendido.
+
+    Se escapo de la primera version de este fichero porque solo miraba
+    README.md, UMBREL.md y LEEME.md: la suite pasaba en verde con el error
+    dentro. Ahora se recorre todo .md y se comprueban las frases que parecen
+    mensajes del programa.
+    """
+
+    # Fragmentos que delatan una cita de mensaje: si un .md los contiene, la
+    # frase de alrededor tiene que existir en el codigo.
+    SENAS = (
+        "Bajando frecuencia",
+        "Bajando voltaje",
+        "Subiendo voltaje",
+        "RAMPA:",
+        "BUSCAR_VOLTAJE:",
+        "OPTIMIZAR:",
+        "Ajuste cambiado fuera del tuner",
+        "Estable en",
+    )
+
+    # Coletillas concretas que estuvieron citadas y nunca existieron.
+    INVENTADAS = (
+        "ya no puede bajar sin pasarse",
+        "el voltaje ya no puede bajar",
+    )
+
+    def test_no_reaparecen_las_coletillas_inventadas(self):
+        for path in documentos():
+            with open(path, encoding="utf-8") as fh:
+                contenido = fh.read()
+            nombre = os.path.relpath(path, REPO_ROOT)
+            for frase in self.INVENTADAS:
+                desde = 0
+                while (i := contenido.find(frase, desde)) != -1:
+                    desde = i + 1
+                    if explicativo(contenido, i):
+                        continue  # se menciona para desmentirla
+                    self.fail(
+                        f"{nombre} cita '{frase}', que no existe en ningun .py: "
+                        f"el grep saldria vacio siempre. "
+                        f"Contexto: ...{contexto(contenido, i)}..."
+                    )
+
+    def test_las_coletillas_inventadas_siguen_sin_existir(self):
+        """Si alguna se implementara, habria que sacarla de INVENTADAS."""
+        for frase in self.INVENTADAS:
+            self.assertNotIn(
+                frase,
+                FUENTES_PEGADAS,
+                f"'{frase}' ya existe en el codigo: quitala de INVENTADAS y "
+                "la documentacion puede citarla",
+            )
+
+    def test_lo_que_parece_un_mensaje_existe(self):
+        """Toda seña citada en un .md tiene que salir tambien del codigo."""
+        for path in documentos():
+            with open(path, encoding="utf-8") as fh:
+                contenido = fh.read()
+            for sena in self.SENAS:
+                if sena in contenido:
+                    self.assertIn(
+                        sena,
+                        FUENTES_PEGADAS,
+                        f"{os.path.relpath(path, REPO_ROOT)} cita '{sena}' y el "
+                        "codigo no lo emite",
+                    )
+
+
+class TestLaExcepcionNoEsDemasiadoAncha(unittest.TestCase):
+    """Que `explicativo()` no acabe tapando el fallo que debe cazar.
+
+    La primera version de MARCAS_EXPLICATIVAS incluia "ya no", y esa cadena esta
+    DENTRO de la frase inventada ("el voltaje ya no puede bajar"), asi que daba
+    por explicativo el texto original y el test pasaba en verde sobre el propio
+    fallo. Este caso lo fija con el texto tal y como estaba.
+    """
+
+    # Copia literal de parches-estabilidad/APLICAR.md:83-84 antes del arreglo.
+    TEXTO_DEL_FALLO = (
+        "- Al pasarse de `TARGET_TEMP`: `Bajando voltaje a ...mV por "
+        "temperatura ...`, y\n  solo cuando el voltaje ya no tiene sitio, "
+        "`Bajando frecuencia a ...MHz ... (el\n  voltaje ya no puede bajar sin "
+        "pasarse del ...% de errores)`.\n"
+    )
+
+    def test_el_texto_original_no_cuenta_como_explicativo(self):
+        pos = self.TEXTO_DEL_FALLO.find("ya no puede bajar")
+        self.assertGreater(pos, -1)
+        self.assertFalse(
+            explicativo(self.TEXTO_DEL_FALLO, pos),
+            "explicativo() da True sobre el texto que tenia el fallo: la "
+            "excepcion tapa justo lo que el test tiene que cazar",
+        )
+
+    def test_el_texto_corregido_si_cuenta(self):
+        path = os.path.join(REPO_ROOT, "parches-estabilidad", "APLICAR.md")
+        if not os.path.exists(path):
+            self.skipTest("no hay parches-estabilidad/ en este arbol")
+        with open(path, encoding="utf-8") as fh:
+            contenido = fh.read()
+        pos = contenido.find("ya no puede bajar")
+        if pos == -1:
+            self.skipTest("el documento ya no menciona la frase")
+        self.assertTrue(
+            explicativo(contenido, pos),
+            "el documento la menciona para desmentirla y el test la marca como "
+            "fallo: falta una marca en MARCAS_EXPLICATIVAS",
+        )
+
+    def test_el_documento_del_fallo_falla_de_verdad(self):
+        """Prueba de extremo a extremo con el texto original en un fichero."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sub = os.path.join(tmp, "parches")
+            os.makedirs(sub)
+            malo = os.path.join(sub, "APLICAR.md")
+            with open(malo, "w", encoding="utf-8") as fh:
+                fh.write(self.TEXTO_DEL_FALLO)
+            # Mismo recorrido que hace el test real, sobre el arbol de pruebas.
+            encontrado = False
+            with open(malo, encoding="utf-8") as fh:
+                contenido = fh.read()
+            for frase in TestNingunDocumentoInventaMensajes.INVENTADAS:
+                i = contenido.find(frase)
+                if i != -1 and not explicativo(contenido, i):
+                    encontrado = True
+            self.assertTrue(
+                encontrado,
+                "el texto original pasaria el filtro: el test no sirve",
+            )
+
+
+class TestLaPalancaTermicaSeDescribeBien(unittest.TestCase):
+    """El calor baja FRECUENCIA primero; el voltaje solo en el suelo.
+
+    APLICAR.md lo contaba al reves porque documentaba c7db4b3, que d2ef8dc
+    revirtio a proposito: bajar voltaje sube los errores justo cuando el chip va
+    mas forzado. Un documento que invierte el orden no es un detalle de
+    redaccion, describe otro comportamiento de seguridad.
+    """
+
+    def test_el_codigo_baja_frecuencia_primero(self):
+        with open(
+            os.path.join(REPO_ROOT, "tuning_estabilidad.py"), encoding="utf-8"
+        ) as fh:
+            texto = fh.read()
+        # La rama termica: if <frecuencia por encima del suelo> ... elif <voltaje>
+        rama = texto.split("if temp > self.target_temp:", 1)[1][:1800]
+        pos_f = rama.find("current_frequency > self.min_frequency")
+        pos_v = rama.find("current_voltage > self.min_voltage")
+        self.assertGreater(pos_f, -1, "no encuentro la rama de frecuencia")
+        self.assertGreater(pos_v, -1, "no encuentro la rama de voltaje")
+        self.assertLess(
+            pos_f,
+            pos_v,
+            "el voltaje se comprueba antes que la frecuencia: la palanca "
+            "termica se ha invertido y hay documentacion que hay que revisar",
+        )
+
+    def test_ningun_documento_dice_lo_contrario(self):
+        """Cita textual del error que tenia APLICAR.md."""
+        for path in documentos():
+            with open(path, encoding="utf-8") as fh:
+                contenido = fh.read()
+            nombre = os.path.relpath(path, REPO_ROOT)
+            # "Bajando voltaje ... y solo cuando ... Bajando frecuencia" es el
+            # orden invertido, salvo si la frase va marcada como historica.
+            if "Bajando voltaje" not in contenido:
+                continue
+            i_v = contenido.find("Bajando voltaje")
+            i_f = contenido.find("Bajando frecuencia")
+            if i_f == -1 or i_v >= i_f:
+                continue
+            ventana = contenido[i_v:i_f]
+            if "solo cuando" not in ventana and "solo con" not in ventana:
+                continue
+            self.assertTrue(
+                "al rev" in ventana or "hist" in ventana.lower(),
+                f"{nombre} presenta el voltaje como primera reaccion al calor "
+                "y la frecuencia como segunda: es el orden invertido",
+            )
 
 
 class TestLosGrepsContraElFuente(unittest.TestCase):

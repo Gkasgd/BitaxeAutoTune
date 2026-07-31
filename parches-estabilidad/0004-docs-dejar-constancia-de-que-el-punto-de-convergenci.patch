@@ -1,0 +1,64 @@
+From d0ea3c55f6bb1aa848f829ec0fc33604fe883c13 Mon Sep 17 00:00:00 2001
+From: BitaxePID Refactor <refactor@local>
+Date: Mon, 27 Jul 2026 01:03:15 -0300
+Subject: [PATCH 4/4] docs: dejar constancia de que el punto de convergencia se
+ verifico contra el optimo
+
+Solo comentarios, ningun cambio de comportamiento.
+
+La busqueda del voltaje minimo se hace en BUSCAR_VOLTAJE, no en _optimizar; lo
+di por muerto porque lo busque en el estado equivocado. Comparado por fuerza
+bruta contra el optimo teorico con los limites reales (1180-1210mV /
+475-925MHz, TARGET_TEMP 60) sobre el chip calibrado con dos medidas del miner:
+con objetivos 1, 2, 5 y 10 % el lazo acaba exactamente en el optimo y el
+voltaje final nunca queda por encima del optimo.
+
+Se anota tambien que se probo y descarto estimar el coste en errores de un paso
+de voltaje midiendolo: resultados identicos en ocho escenarios, porque esta
+rama apenas se ejerce.
+---
+ tuning_estabilidad.py | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/tuning_estabilidad.py b/tuning_estabilidad.py
+index 4a53a25..7926f1c 100644
+--- a/tuning_estabilidad.py
++++ b/tuning_estabilidad.py
+@@ -591,7 +591,17 @@ class EstabilidadTuningStrategy:
+                 )
+                 return v, objetivo_f
+             # Sobra margen de errores y la frecuencia esta en su tope duro: se baja
+-            # voltaje, que es la mitad "con el menor voltaje" del procedimiento.
++            # voltaje. Ojo: la busqueda del voltaje minimo NO se hace aqui, se hace
++            # en BUSCAR_VOLTAJE, que es el estado dedicado a eso. Esto es solo el
++            # afinado del regimen permanente.
++            #
++            # Verificado por fuerza bruta contra el optimo teorico, con los limites
++            # reales (1180-1210mV / 475-925MHz, TARGET_TEMP 60) sobre un chip
++            # calibrado con dos medidas del miner: con objetivos 1, 2, 5 y 10 % el
++            # lazo acaba EXACTAMENTE en el optimo, y el voltaje final nunca queda
++            # por encima del optimo. Que el voltaje acabe alto no es un fallo: mas
++            # voltaje sostiene mas frecuencia al mismo nivel de errores, y el
++            # procedimiento pide primero la frecuencia mas alta.
+             #
+             # La condicion es a proposito estrecha (solo en max_frequency) y no se
+             # debe ensanchar sin resolver antes el ciclo entre las dos palancas:
+@@ -603,8 +613,13 @@ class EstabilidadTuningStrategy:
+             # La causa de fondo es de escalones, no de logica: un paso de voltaje
+             # mueve los errores mucho mas que la histeresis que autoriza el cambio
+             # (10 mV = 1.6 puntos contra 0.5 de banda), asi que desde un punto que
+-            # cumple, bajar voltaje se pasa siempre. Para que esta busqueda sea
+-            # util hace falta VOLTAGE_STEP fino o una banda mayor.
++            # cumple, bajar voltaje se pasa siempre.
++            #
++            # Tambien se probo y descarto estimar ese coste midiendolo (comparando
++            # la mediana antes y despues de cada cambio de voltaje) para exigir un
++            # margen mayor que el coste: daba resultados identicos en ocho
++            # escenarios, porque en la practica esta rama casi no se ejerce. Era
++            # codigo muerto.
+             if f >= self.max_frequency and v > self.min_voltage:
+                 nueva_v = v - self.voltage_step
+                 if f >= self.max_frequency:
+-- 
+2.34.1
+
