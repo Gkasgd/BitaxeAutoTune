@@ -38,8 +38,30 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
+    # --ip deja de ser obligatorio SOLO con --dry-run, que no abre ninguna
+    # conexion. La comprobacion se hace despues de parsear, para poder dar el
+    # mismo error de argparse ("--ip es obligatorio") en el resto de los casos.
     parser.add_argument(
-        "--ip", required=True, type=str, help="IP address of the Bitaxe miner"
+        "--ip", type=str, help="IP address of the Bitaxe miner"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Cargar y validar la configuracion, imprimirla con el fichero del "
+            "que sale cada clave, y salir sin conectar con ningun miner. "
+            "Necesita --asic, porque el modelo se lee del miner y aqui no se "
+            "consulta"
+        ),
+    )
+    parser.add_argument(
+        "--asic",
+        type=str,
+        choices=["BM1366", "BM1368", "BM1370", "BM1397"],
+        help=(
+            "Modelo de ASIC para --dry-run. En una ejecucion normal no se usa: "
+            "el modelo lo reporta el propio miner"
+        ),
     )
     parser.add_argument(
         "--config", type=str, help="Path to optional user YAML configuration file"
@@ -106,4 +128,32 @@ def parse_arguments() -> argparse.Namespace:
             "configuracion de pools existente)"
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # --ip era required=True. Lo sigue siendo en la practica, salvo con
+    # --dry-run: pedir una IP para un modo que promete no abrir ninguna conexion
+    # obligaria a inventarse una, y quien la lea en el historial no sabria que no
+    # se uso. La comprobacion se hace aqui, con parser.error, para que el mensaje
+    # y el codigo de salida (2) sean los mismos que daba argparse.
+    if not args.dry_run and not args.ip:
+        parser.error(
+            "--ip es obligatorio (salvo con --dry-run, que no conecta con "
+            "ningun miner)"
+        )
+
+    # El modelo de ASIC lo reporta el propio miner, y de ahi sale el YAML base.
+    # Sin miner al que preguntar no hay forma de adivinarlo, y elegir uno por
+    # omision seria peor: validaria la configuracion contra los limites de otro
+    # chip y diria que todo esta bien.
+    if args.dry_run and not args.asic:
+        parser.error(
+            "--dry-run necesita --asic MODELO: el modelo de chip lo reporta el "
+            "miner, y en --dry-run no se consulta a ninguno"
+        )
+    if args.asic and not args.dry_run:
+        parser.error(
+            "--asic solo tiene sentido con --dry-run: en una ejecucion normal el "
+            "modelo se lee del miner y este valor se ignoraria en silencio"
+        )
+
+    return args

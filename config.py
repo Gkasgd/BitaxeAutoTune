@@ -2,10 +2,11 @@
 """
 Carga y validacion de la configuracion de BitaxePID.
 
-La configuracion se compone en dos capas: el YAML del modelo de ASIC
-(BM1366.yaml, BM1370.yaml...) con los limites de voltaje y frecuencia de ese
-chip, y opcionalmente un YAML de usuario que sobreescribe claves concretas. Las
-opciones de linea de comandos se aplican encima de todo eso, en cli.py.
+La configuracion se compone en dos capas: el YAML del modelo de ASIC, en
+`chips/` (chips/BM1366.yaml, chips/BM1370.yaml...), con los limites de voltaje y
+frecuencia de ese chip, y opcionalmente un YAML de usuario de `perfiles/` que
+sobreescribe claves concretas. Las opciones de linea de comandos se aplican
+encima de todo eso, en cli.py.
 
 Hay tres categorias de clave, y la diferencia importa:
 
@@ -20,7 +21,9 @@ Hay tres categorias de clave, y la diferencia importa:
 Uso:
     from config import YamlConfigLoader, load_config, opcional, validate_config
 
-    config = load_config(YamlConfigLoader(), "BM1366.yaml", "mi_config.yaml")
+    config = load_config(
+        YamlConfigLoader(), "chips/BM1366.yaml", "perfiles/gamma-estabilidad.yaml"
+    )
     validate_config(config)   # falta una clave -> termina; fuera de rango -> recorta
     ventana = opcional(config, "ERROR_WINDOW")   # el valor, o su defecto
 
@@ -32,7 +35,7 @@ Dependencias:
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
@@ -133,14 +136,14 @@ class YamlConfigLoader:
         Load configuration settings from a YAML file.
 
         Args:
-            file_path (str): Path to the configuration file (e.g., "BM1366.yaml").
+            file_path (str): Path to the configuration file (e.g., "chips/BM1366.yaml").
 
         Returns:
             Dict[str, Any]: Configuration data as a dictionary (e.g., {"INITIAL_VOLTAGE": 1200}), empty if loading fails.
 
         Example:
             >>> loader = YamlConfigLoader()
-            >>> config = loader.load_config("BM1366.yaml")
+            >>> config = loader.load_config("chips/BM1366.yaml")
             >>> config["INITIAL_VOLTAGE"]
             1200
         """
@@ -153,6 +156,137 @@ class YamlConfigLoader:
         except Exception as e:
             logger.error(f"Failed to load configuration file {file_path}: {e}")
             return {}
+
+
+def load_config_con_procedencia(
+    config_loader: YamlConfigLoader,
+    asic_yaml: str,
+    user_config_path: Optional[str] = None,
+) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """
+    Como `load_config`, pero devolviendo tambien de donde sale cada clave.
+
+    La configuracion se monta en dos capas: el YAML del chip que el miner
+    reporta, y encima el `--config` del usuario. El resultado fusionado no dice
+    cual gano, y eso importa: un perfil que solo declara los maximos deja los
+    minimos en los de fabrica, que es como un perfil llamado "seguro" acaba con
+    un rango efectivo que no es el que promete.
+
+    Args:
+        config_loader (YamlConfigLoader): Loader for YAML files.
+        asic_yaml (str): Path to ASIC model YAML file.
+        user_config_path (Optional[str]): Path to optional user config YAML.
+
+    Returns:
+        Tuple[Dict[str, Any], Dict[str, str]]: la configuracion fusionada, y un
+            diccionario clave -> ruta del fichero que aporto el valor final.
+    """
+    config = load_config(config_loader, asic_yaml, user_config_path)
+    # Se releen los dos ficheros en vez de instrumentar la fusion: load_config ya
+    # ha comprobado que existen y se pueden leer, y asi la ruta que de verdad
+    # arranca el programa no cambia de forma.
+    del_chip = config_loader.load_config(asic_yaml)
+    procedencia = {clave: asic_yaml for clave in del_chip}
+    if user_config_path:
+        for clave in config_loader.load_config(user_config_path):
+            procedencia[clave] = user_config_path
+    return config, procedencia
+
+
+def claves_heredadas(procedencia: Dict[str, str], user_config_path: str) -> list:
+    """Claves que el perfil de usuario NO declara y hereda del YAML del chip."""
+    return sorted(k for k, origen in procedencia.items() if origen != user_config_path)
+
+
+def ruta_yaml_de_chip(asic_model: str) -> str:
+    """
+    Ruta del YAML de fabrica del modelo de ASIC que reporta el miner.
+
+    En un solo sitio porque la elige el arranque a partir de la respuesta de la
+    API, y tambien --dry-run a partir de --asic. Con la ruta escrita en cada
+    llamada, mover los YAML de sitio deja uno de los dos caminos apuntando al
+    antiguo, y el que se rompe es el que no tiene test que no necesite un miner.
+
+    Los YAML de fabrica viven en `chips/` y los perfiles de usuario en
+    `perfiles/`. Estaban los seis en la raiz, donde nada distinguia el que el
+    programa elige solo (por el modelo que reporta el miner) de los dos que se
+    pasan a mano con --config.
+
+    Args:
+        asic_model (str): Modelo tal como lo devuelve la API ("BM1370") o
+            "default" si la respuesta no lo trae.
+
+    Returns:
+        str: Ruta relativa al directorio de trabajo.
+    """
+    return f"chips/{asic_model}.yaml"
+
+
+def registrar_procedencia(
+    procedencia: Dict[str, str], asic_yaml: str, user_config_path: Optional[str]
+) -> None:
+    """
+    Dejar en el log INFO que claves manda cada capa.
+
+    Sin esto, la herencia entre el YAML del chip y el perfil de usuario es
+    invisible: el log dice que se cargaron dos ficheros, y no cual gano en cada
+    clave. El caso que importa es un perfil que baja MAX_VOLTAGE y se deja
+    MIN_VOLTAGE sin declarar: el rango efectivo no es el que el nombre del
+    fichero promete, y hasta ahora no habia forma de verlo sin leer los dos YAML
+    a la vez.
+
+    Args:
+        procedencia (Dict[str, str]): Salida de `load_config_con_procedencia`.
+        asic_yaml (str): Ruta del YAML del chip.
+        user_config_path (Optional[str]): Ruta del perfil de usuario, si hay.
+    """
+    if not user_config_path:
+        logger.info(
+            f"Configuracion cargada solo de {asic_yaml} (limites de fabrica del "
+            "chip): no se paso --config"
+        )
+        return
+    heredadas = claves_heredadas(procedencia, user_config_path)
+    propias = len(procedencia) - len(heredadas)
+    if heredadas:
+        logger.info(
+            f"{propias} claves declaradas en {user_config_path}; "
+            f"{len(heredadas)} heredadas de {asic_yaml}: "
+            + ", ".join(heredadas)
+        )
+    else:
+        logger.info(
+            f"{propias} claves, todas declaradas en {user_config_path}: no se "
+            f"hereda nada de {asic_yaml}"
+        )
+
+
+def imprimir_configuracion_efectiva(
+    config: Dict[str, Any], procedencia: Dict[str, str]
+) -> None:
+    """
+    Escribir por stdout la configuracion con la que se arrancaria, y su origen.
+
+    Es la salida de `--dry-run`. Va por `print` y no por el logger a proposito:
+    el logger escribe a un fichero, y esto se pide para leerlo en la terminal.
+    Incluye las claves opcionales ausentes con su defecto, marcadas como
+    (defecto del programa), porque son justo las que no estan en ningun YAML y
+    aun asi rigen.
+
+    Args:
+        config (Dict[str, Any]): Configuracion fusionada y ya validada.
+        procedencia (Dict[str, str]): Salida de `load_config_con_procedencia`.
+    """
+    ancho = max(len(k) for k in config) if config else 0
+    print("Configuracion efectiva:")
+    for clave in sorted(config):
+        origen = procedencia.get(clave, "override de linea de comandos")
+        print(f"  {clave:<{ancho}}  {config[clave]!r:<28}  <- {origen}")
+    ausentes = sorted(k for k in CLAVES_OPCIONALES if k not in config)
+    if ausentes:
+        print("\nOpcionales no declaradas, rige el defecto del programa:")
+        for clave in ausentes:
+            print(f"  {clave:<{ancho}}  {CLAVES_OPCIONALES[clave]!r}")
 
 
 def load_config(
