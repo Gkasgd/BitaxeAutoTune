@@ -26,15 +26,24 @@ El programa corre en un servidor de Umbrel dentro de la misma red que la Bitaxe,
 En la configuración se puede DESACTIVAR LA MEDICIÓN DE POOLS Y SU POSTERIOR CONFIGURACIÓN, usando las que ya tenés cargadas en las Bitaxe.
 
 ## USO
+copia los archivos a tu umbrel por ejemplo. Si estás en windows te va a servir
+
+scp -r "El directorio/enWindows" umbrel@tuip.com:~/BitaxePID
+
 cd ~/BitaxePID
-BITAXEPID_MINER_IP=LA IP DE TU BITAXE docker compose up -d --build LA PRIMERA VEZ
-docker compose up -d --build SI HACES ALGUN CAMBIO
+
+BITAXEPID_MINER_IP=LA IP DE TU BITAXE docker compose up -d --build #LA PRIMERA VEZ
+
+docker compose up -d --build #SI HACES ALGUN CAMBIO
 ______________________________
 docker compose down     # parar
+
 docker compose up -d    # arrancar
+
 docker compose logs -f  # ver qué hace (Ctrl+C solo sale del log)
 __________________________
 los cambios se hacen aquí
+
 nano ~/BitaxePID/SAFE-BM1370-estabilidad.yaml
 
 <img width="1106" height="267" alt="{6C70C8A8-B84D-4ABD-8C03-DBFB2B987844}" src="https://github.com/user-attachments/assets/b04b3db1-5489-4345-b4dc-492dadd4d95f" />
