@@ -86,7 +86,7 @@ def simular(
 
 
 def nueva(**kw):
-    """Estrategia con los limites de safe-BM1370 y objetivo del 2 %."""
+    """Estrategia con los limites de gamma-conservador y objetivo del 2 %."""
     base = dict(
         min_voltage=1150,
         max_voltage=1250,

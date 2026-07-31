@@ -41,7 +41,7 @@ SYSTEM_INFO = {
 
 
 def cargar_config():
-    with open(os.path.join(REPO_ROOT, "BM1370.yaml")) as fh:
+    with open(os.path.join(REPO_ROOT, "chips", "BM1370.yaml")) as fh:
         return yaml.safe_load(fh)
 
 
@@ -204,13 +204,13 @@ class TestActivadoGestionaPools(unittest.TestCase):
 
 class TestConfiguracion(unittest.TestCase):
     def test_los_yaml_de_chip_traen_la_clave_desactivada(self):
-        """Todos los BM*.yaml deben declarar MANAGE_MINER_POOLS y en falso: si
+        """Todos los chips/BM*.yaml deben declarar MANAGE_MINER_POOLS y en falso: si
         faltara, un usuario que actualice tendria el comportamiento antiguo sin
         saberlo."""
         import glob
 
-        ficheros = sorted(glob.glob(os.path.join(REPO_ROOT, "BM*.yaml")))
-        self.assertTrue(ficheros, "no se encontro ningun BM*.yaml")
+        ficheros = sorted(glob.glob(os.path.join(REPO_ROOT, "chips", "BM*.yaml")))
+        self.assertTrue(ficheros, "no se encontro ningun chips/BM*.yaml")
         for path in ficheros:
             with self.subTest(fichero=os.path.basename(path)):
                 with open(path) as fh:
@@ -230,6 +230,66 @@ class TestConfiguracion(unittest.TestCase):
             sys, "argv", ["bitaxepid.py", "--ip", "192.168.1.1", "--manage-pools"]
         ):
             self.assertTrue(parse_arguments().manage_pools)
+
+
+class TestNoSeVersionaUnaDireccionDePago(unittest.TestCase):
+    """user.yaml traia una direccion Bitcoin heredada del proyecto original.
+
+    Era bc1qx6uqjyddpyx6f0kw79d040geepqtyjef6at9ud.bitaxepid, identica a la del
+    upstream (comprobado con diff), o sea de un tercero y no del dueño del fork.
+    No se usaba con la configuracion por defecto, porque hacen falta dos cosas a
+    la vez: --manage-pools activo (por defecto no lo esta) y stratumUser vacio en
+    la API del miner. Pero era una trampa armada: en ese caso el hashrate se
+    habria ido a esa direccion sin que nada lo dijera.
+
+    Ahora las claves van vacias, y con --manage-pools el arranque termina en
+    "Stratum users missing" sin tocar el miner. Es el resultado correcto: sin
+    usuario el miner no mina de todas formas.
+    """
+
+    # Trozo de la direccion original, para que el test la reconozca si vuelve.
+    HEREDADA = "bc1qx6uqjyddpyx6f0kw79d040geepqtyjef6at9ud"
+
+    def _cargar(self):
+        with open(os.path.join(REPO_ROOT, "user.yaml"), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_la_direccion_del_upstream_ya_no_esta_como_valor(self):
+        """Puede citarse en un comentario para explicar por que se quito; lo que
+        no puede es volver a ser el valor de una clave."""
+        data = yaml.safe_load(self._cargar())
+        for clave, valor in data.items():
+            with self.subTest(clave=clave):
+                self.assertNotIn(self.HEREDADA, str(valor))
+
+    def test_ninguna_clave_trae_una_direccion(self):
+        """Mas ancho que el test anterior: cualquier direccion, no solo esa. Un
+        fork publico no debe versionar la de nadie, ni la del upstream ni la del
+        que lo mantiene."""
+        data = yaml.safe_load(self._cargar())
+        for clave, valor in data.items():
+            with self.subTest(clave=clave):
+                texto = str(valor or "")
+                for prefijo in ("bc1", "1", "3", "tb1"):
+                    if texto.startswith(prefijo) and len(texto) > 20:
+                        self.fail(
+                            f"{clave} parece traer una direccion: {texto!r}. "
+                            "Debe ir vacia en el repositorio."
+                        )
+
+    def test_las_dos_claves_siguen_declaradas(self):
+        """Vaciarlas si, borrarlas no: load_config avisa si el YAML esta vacio, y
+        el fichero tiene que seguir sirviendo de plantilla."""
+        data = yaml.safe_load(self._cargar())
+        self.assertIn("stratumUser", data)
+        self.assertIn("fallbackStratumUser", data)
+
+    def test_el_fichero_explica_cuando_se_lee(self):
+        """La condicion doble (--manage-pools y stratumUser vacio en el miner) no
+        se deduce leyendo el fichero, y es lo que hace que parezca inofensivo."""
+        contenido = self._cargar()
+        self.assertIn("--manage-pools", contenido)
+        self.assertIn("stratumUser vacio", contenido)
 
 
 if __name__ == "__main__":

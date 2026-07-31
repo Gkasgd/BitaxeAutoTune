@@ -464,6 +464,134 @@ class TestLaPalancaTermicaSeDescribeBien(unittest.TestCase):
                 "y la frecuencia como segunda: es el orden invertido",
             )
 
+    # El test de arriba busca la CITA del log ("Bajando voltaje ... solo cuando
+    # ... Bajando frecuencia"). El fallo siguiente aparecio en prosa, sin citar
+    # nada, y por eso paso: el LEEME resumia la tanda anterior diciendo "el
+    # voltaje pasa a ser la palanca termica" mientras 385 lineas mas abajo decia
+    # que es la frecuencia. Historicamente la primera frase describe c7db4b3 y es
+    # cierta, pero se lee como el estado de hoy.
+    AFIRMACIONES = (
+        "el voltaje pasa a ser la palanca",
+        "el voltaje es la palanca",
+        "la palanca termica es el voltaje",
+        "la palanca térmica es el voltaje",
+        "baja voltaje primero",
+    )
+
+    # Marcas que convierten la frase en historia declarada. Tienen que estar en
+    # la MISMA oracion, no en cualquier parte del documento: medido sobre los dos
+    # ficheros reales, en APLICAR.md el marcador mas cercano estaba a unos 1000
+    # caracteres y en el LEEME no habia ninguno antes de la frase, asi que una
+    # ventana ancha habria aprobado los dos.
+    #
+    # Y todas hablan de REVERTIR, nada mas. "ya no" y "entonces" estaban aqui y
+    # se han quitado: TestElMarcadorDeHistoriaNoEsDemasiadoAncho demostro que
+    # "ya no" aparece en la misma oracion del fallo real ("la RAMPA ya no
+    # abandona..."), asi que con el dentro este test aprobaba el texto que existe
+    # para cazar. Es el segundo marcador de esta bateria que sale demasiado
+    # ancho por la misma razon: la palabra generica tambien esta en el fallo.
+    MARCAS_DE_HISTORIA = ("revirti", "revierte", "al rev", "revertid")
+
+    def test_ningun_documento_afirma_en_prosa_que_el_voltaje_es_la_palanca(self):
+        for path in documentos():
+            with open(path, encoding="utf-8") as fh:
+                contenido = fh.read()
+            nombre = os.path.relpath(path, REPO_ROOT)
+            plano = normalizar(contenido)
+            # Un documento marcado como historico en su cabecera queda excluido
+            # entero: es el caso de APLICAR.md, cuyo primer parrafo ya avisa.
+            cabecera = plano[:1200].lower()
+            if "documento hist" in cabecera:
+                continue
+            bajo = plano.lower()
+            for frase in self.AFIRMACIONES:
+                i = bajo.find(frase.lower())
+                if i == -1:
+                    continue
+                # La oracion que contiene la frase, entre puntos o parentesis.
+                ini = max(
+                    bajo.rfind(". ", 0, i),
+                    bajo.rfind("(", 0, i),
+                    bajo.rfind("\n", 0, i),
+                )
+                fin = i + len(frase)
+                for cierre in (". ", ")", "\n"):
+                    j = bajo.find(cierre, fin)
+                    if j != -1:
+                        fin = min(fin + 400, j + len(cierre))
+                        break
+                oracion = bajo[max(0, ini) : fin]
+                self.assertTrue(
+                    any(m in oracion for m in self.MARCAS_DE_HISTORIA),
+                    f"{nombre} afirma «{frase}» sin marcarlo como revertido. "
+                    "Hoy el calor baja frecuencia primero (d2ef8dc). Si la frase "
+                    "describe una tanda anterior, dilo en la misma oracion.\n"
+                    f"  oracion: {oracion.strip()!r}",
+                )
+
+
+class TestElMarcadorDeHistoriaNoEsDemasiadoAncho(unittest.TestCase):
+    """El marcador de la clase anterior tiene que fallar sobre el fallo real.
+
+    Es la leccion de TestLaExcepcionNoEsDemasiadoAncha: alli el marcador "ya no"
+    aparecia dentro de la propia frase inventada, asi que el test aprobaba
+    justamente el texto que existia para cazar. Aqui se prueba al reves: se
+    embebe el texto original del LEEME y se exige que NO cuente como historia.
+    """
+
+    # Copia literal de archivos-para-umbrel/LEEME.md:56-58 antes del arreglo.
+    TEXTO_DEL_FALLO = (
+        "Además de los tres arreglos de la tanda anterior (la RAMPA ya no "
+        "abandona por el\ncalor del ajuste anterior, se adoptan los cambios "
+        "hechos por la web de AxeOS, y\nel voltaje pasa a ser la palanca "
+        "térmica), esta tanda cierra catorce hallazgos de\nrevisión."
+    )
+
+    def _oracion_de(self, texto):
+        """Misma extraccion que el test real, para probar el marcador solo."""
+        clase = TestLaPalancaTermicaSeDescribeBien
+        bajo = normalizar(texto).lower()
+        frase = "el voltaje pasa a ser la palanca"
+        i = bajo.find(frase)
+        assert i != -1, "el texto de prueba ya no contiene la frase"
+        ini = max(bajo.rfind(". ", 0, i), bajo.rfind("(", 0, i), bajo.rfind("\n", 0, i))
+        fin = i + len(frase)
+        for cierre in (". ", ")", "\n"):
+            j = bajo.find(cierre, fin)
+            if j != -1:
+                fin = min(fin + 400, j + len(cierre))
+                break
+        oracion = bajo[max(0, ini) : fin]
+        return oracion, clase.MARCAS_DE_HISTORIA
+
+    def test_el_texto_original_no_cuenta_como_historia(self):
+        """Ojo con esta: el parrafo contiene "ya no" ("la RAMPA ya no abandona"),
+        que es una de las marcas. Si la ventana llegara hasta ahi, el test
+        aprobaria el fallo. Por eso la ventana es la oracion, y el parentesis la
+        corta."""
+        oracion, marcas = self._oracion_de(self.TEXTO_DEL_FALLO)
+        presentes = [m for m in marcas if m in oracion]
+        self.assertEqual(
+            presentes,
+            [],
+            "el texto original cuenta como historia y el test lo aprobaria: "
+            f"marcas encontradas {presentes} en {oracion.strip()!r}",
+        )
+
+    def test_el_texto_corregido_si_cuenta(self):
+        corregido = (
+            "Además de los tres arreglos de la tanda anterior (la RAMPA ya no "
+            "abandona por el calor del ajuste anterior, se adoptan los cambios "
+            "hechos por la web de AxeOS, y el voltaje pasa a ser la palanca "
+            "térmica, que esta tanda revierte a propósito), esta tanda cierra "
+            "catorce hallazgos."
+        )
+        oracion, marcas = self._oracion_de(corregido)
+        self.assertTrue(
+            any(m in oracion for m in marcas),
+            f"el texto corregido tampoco cuenta como historia: {oracion.strip()!r}",
+        )
+
 
 class TestLosGrepsContraElFuente(unittest.TestCase):
     """Caso B: lo que se busca dentro de un .py tiene que caber en una linea.
@@ -580,6 +708,64 @@ class TestNadieDeclaraDependenciasSinUsarlas(unittest.TestCase):
             if not re.search(rf"^\s*(import|from)\s+{modulo}\b", FUENTES, re.M):
                 sobra.append(paquete)
         self.assertEqual(sobra, [], f"declarado y no importado: {sobra}")
+
+
+class TestLasRemisionesInternasApuntanAAlgo(unittest.TestCase):
+    """Un «ver la seccion X» tiene que citar una seccion que exista.
+
+    Salio arreglando el hallazgo anterior: al reescribir el parrafo del LEEME
+    remiti a «Que mirar en el log», que es el titulo que usa APLICAR.md, no el
+    LEEME, donde la seccion se llama «Comprobar que los tres arreglos estan
+    vivos». Ningun test lo miraba.
+
+    Es el mismo desenlace que todo este fichero persigue: el usuario busca lo que
+    le mandan, no lo encuentra, y concluye que falta el arreglo en vez de que
+    falla el documento. Con un titulo inexistente ni siquiera puede buscarlo.
+    """
+
+    # Comillas latinas y el "«...»" de las remisiones. Se acepta cualquiera de
+    # las dos formas porque los documentos usan las dos.
+    PATRON = re.compile(r"[«\"]([^«»\"\n]{6,80})[»\"]")
+
+    # Frases entre comillas que NO son remisiones a secciones: son citas del log,
+    # nombres de fichero o texto que se desmiente. Se reconocen por contenido.
+    def _es_remision(self, contenido, inicio, cita):
+        antes = contenido[max(0, inicio - 60) : inicio].lower()
+        # Un mensaje de commit va entre comillas y suele llevar "ver" cerca por
+        # casualidad: `git commit -m "estrategia de estabilidad con los tres
+        # arreglos de campo"` daba un falso positivo. Lo que sigue a -m es un
+        # argumento, no una remision.
+        if re.search(r"-m\s*$", antes):
+            return False
+        return any(
+            m in antes for m in ("secci", "apartado", "ver ", "esta en ", "está en ")
+        ) and not cita.endswith((".md", ".py", ".yaml", ".txt"))
+
+    def _titulos(self, contenido):
+        return {
+            linea.lstrip("#").strip().lower()
+            for linea in contenido.splitlines()
+            if linea.startswith("#")
+        }
+
+    def test_toda_remision_a_una_seccion_existe(self):
+        for path in documentos():
+            with open(path, encoding="utf-8") as fh:
+                contenido = fh.read()
+            nombre = os.path.relpath(path, REPO_ROOT)
+            titulos = self._titulos(contenido)
+            for m in self.PATRON.finditer(contenido):
+                cita = m.group(1).strip()
+                if not self._es_remision(contenido, m.start(), cita):
+                    continue
+                with self.subTest(documento=nombre, cita=cita):
+                    self.assertIn(
+                        cita.lower(),
+                        titulos,
+                        f"{nombre} remite a la seccion «{cita}», que no es "
+                        f"ningun titulo del documento. Titulos reales: "
+                        f"{sorted(titulos)}",
+                    )
 
 
 if __name__ == "__main__":

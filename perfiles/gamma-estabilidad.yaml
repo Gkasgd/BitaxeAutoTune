@@ -1,17 +1,26 @@
-# safe-BM1370-estabilidad.yaml — perfil COMPLETO para BM1370 (Bitaxe Gamma / 601)
+# gamma-estabilidad.yaml — perfil COMPLETO para BM1370 (Bitaxe Gamma / 601)
+#
+# Es el perfil por defecto del despliegue (docker-compose.yml y .env.example) y
+# el unico probado en hardware real. Se llamaba safe-BM1370-estabilidad.yaml y
+# estaba en la raiz, junto a los YAML de chip.
 #
 # Declara las 32 claves que el programa puede leer, en vez de heredar en
 # silencio las que falten del YAML del chip. Asi lo que ves aqui es exactamente
-# lo que corre: no hace falta abrir BM1370.yaml para saber con que limites
-# trabaja el tuner. Comprobado: este fichero no hereda ninguna clave.
+# lo que corre: no hace falta abrir chips/BM1370.yaml para saber con que limites
+# trabaja el tuner. Comprobado, y se puede volver a comprobar sin miner:
 #
-# BM1370.yaml tiene que existir igualmente en el directorio. El tuner lo carga
-# antes de aplicar este encima, y aborta si no lo encuentra.
+#   python bitaxepid.py --dry-run --asic BM1370 --config perfiles/gamma-estabilidad.yaml
 #
-#   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370-estabilidad.yaml
+# imprime cada clave con el fichero del que sale; con este perfil todas dicen
+# perfiles/gamma-estabilidad.yaml.
 #
-# Como se aplica: el tuner lee el ASICModel del miner, carga <modelo>.yaml y
-# hace un update() con este fichero encima. Al declararlo todo, el YAML del
+# chips/BM1370.yaml tiene que existir igualmente. El tuner lo carga antes de
+# aplicar este encima, y aborta si no lo encuentra.
+#
+#   python bitaxepid.py --ip <ip-del-miner> --config perfiles/gamma-estabilidad.yaml
+#
+# Como se aplica: el tuner lee el ASICModel del miner, carga chips/<modelo>.yaml
+# y hace un update() con este fichero encima. Al declararlo todo, el YAML del
 # chip queda como red de seguridad y nada mas.
 #
 # AJUSTA LOS VALORES A TU HARDWARE. Los topes y objetivos de aqui estan puestos

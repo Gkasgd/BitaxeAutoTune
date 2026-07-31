@@ -21,7 +21,7 @@ import unittest
 from config import clamp_initial_values
 
 # Rango de referencia de los tests. Coincide a proposito con los topes seguros
-# de safe-BM1370.yaml, que es el caso que motivo estos tests.
+# de perfiles/gamma-conservador.yaml, que es el caso que motivo estos tests.
 LIMITES = {
     "MIN_VOLTAGE": 1000,
     "MAX_VOLTAGE": 1150,
@@ -55,7 +55,7 @@ class TestRecortaPorArriba(unittest.TestCase):
     def test_heredado_del_yaml_del_chip(self):
         """El caso real y silencioso: bajar solo los MAX_ en un YAML propio.
 
-        BM1370.yaml trae INITIAL_FREQUENCY 550 y INITIAL_VOLTAGE 1150. Un
+        chips/BM1370.yaml trae INITIAL_FREQUENCY 550 e INITIAL_VOLTAGE 1150. Un
         fichero de usuario que solo baja MAX_FREQUENCY a 500 hereda el 550.
         """
         c = clamp_initial_values(config(1150, 550))

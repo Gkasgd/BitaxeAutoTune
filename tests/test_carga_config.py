@@ -6,7 +6,7 @@ codigo original, si la ruta pasada con --config no existia, se ignoraba en
 silencio y el programa seguia con los limites del YAML del chip.
 
 Eso importa porque el fichero de usuario es justo donde se bajan MAX_VOLTAGE y
-MAX_FREQUENCY. Medido: con `--config /no/existe/safe-BM1370.yaml` y BM1370.yaml
+MAX_FREQUENCY. Medido: con `--config /no/existe/perfil.yaml` y BM1370.yaml
 debajo, la configuracion resultante tenia MAX_VOLTAGE=1250 y MAX_FREQUENCY=625
 (los de fabrica) sin una sola linea de log. Una ruta mal escrita, o un montaje
 de contenedor equivocado, dejaba al miner sin los topes que se creian puestos.
@@ -40,7 +40,7 @@ class BaseConFicheros(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
-        self.chip = self.escribir("BM1370.yaml", CHIP)
+        self.chip = self.escribir("BM1370.yaml", CHIP)  # el nombre da igual: se pasa la ruta
         self.loader = YamlConfigLoader()
 
     def escribir(self, nombre, contenido):

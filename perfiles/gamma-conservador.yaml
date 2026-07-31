@@ -1,21 +1,26 @@
-# safe-BM1370.yaml — perfil conservador para BM1370 (Bitaxe Gamma / 601)
+# gamma-conservador.yaml — perfil conservador para BM1370 (Bitaxe Gamma / 601)
 #
-# Se pasa con --config y sus claves se aplican ENCIMA de BM1370.yaml, que el
-# tuner elige solo leyendo el ASICModel del miner. Solo hace falta declarar lo
-# que se quiere cambiar; el resto se hereda.
+# Se pasa con --config y sus claves se aplican ENCIMA de chips/BM1370.yaml, que
+# el tuner elige solo leyendo el ASICModel del miner.
 #
-#   python bitaxepid.py --ip <ip-del-miner> --config safe-BM1370.yaml
+#   python bitaxepid.py --ip <ip-del-miner> --config perfiles/gamma-conservador.yaml
 #
-# CUIDADO CON LO QUE SE HEREDA. Lo que no esta aqui sale de BM1370.yaml, o sea
-# de fabrica, y eso incluye limites. Este perfil declara los CUATRO extremos
-# (los dos maximos y los dos minimos) para que el rango efectivo se lea de un
-# tiron en este fichero y no haya que ir a mirar el del chip:
+# Se llamaba safe-BM1370.yaml y estaba en la raiz, junto a los YAML de chip.
 #
-#     de fabrica (BM1370.yaml):  1000-1250 mV   400-625 MHz
-#     este perfil:               1100-1150 mV   425-500 MHz
+# Este fichero declara TODAS las claves que el programa lee, para que no haya que
+# leer dos ficheros a la vez para saber con que corre. Antes heredaba diez de
+# chips/BM1370.yaml, entre ellas los dos pasos de ajuste, que sí deciden cuanto
+# se mueve cada valor en cada muestra.
 #
-# Si se anaden claves, conviene comprobar en el arranque cual rige de verdad:
-# el endpoint :8093/metrics publica los limites vigentes.
+#     de fabrica (chips/BM1370.yaml):  1000-1250 mV   400-625 MHz
+#     este perfil:                     1100-1150 mV   425-500 MHz
+#
+# Para verlo sin arrancar contra el miner:
+#
+#   python bitaxepid.py --dry-run --asic BM1370 --config perfiles/gamma-conservador.yaml
+#
+# imprime cada clave con el fichero del que sale. Con este perfil, todas las
+# lineas deben decir perfiles/gamma-conservador.yaml.
 
 # --- Los cinco topes de seguridad ------------------------------------------
 
@@ -86,3 +91,34 @@ METRICS_SERVE: TRUE
 # el directorio se crea solo.
 LOG_FILE: "data/bitaxepid_tuning_log_BM1370_safe.csv"
 SNAPSHOT_FILE: "data/bitaxepid_snapshot_BM1370_safe.json"
+
+# --- Las diez claves que antes se heredaban -------------------------------
+# Estaban en chips/BM1370.yaml y no aqui, con los mismos valores que se repiten
+# ahora. Se declaran para que este fichero se pueda leer solo, y porque dos de
+# ellas no son inertes: los pasos deciden cuanto se mueve el tuner en cada
+# muestra, asi que heredarlos hacia que un cambio en el YAML de fabrica alterara
+# el comportamiento de este perfil sin tocarlo.
+
+# Cuanto sube o baja el tuner en cada decision. Con 25 MHz y el rango
+# 425-500 MHz de este perfil quedan solo tres escalones, que es lo que se quiere
+# de un perfil conservador: pocos puntos de operacion y bien separados.
+FREQUENCY_STEP: 25
+VOLTAGE_STEP: 10
+
+# Los pools y el fichero de usuario. Rutas relativas al directorio de trabajo
+# (/app en el contenedor), no a este fichero.
+POOLS_FILE: "pools.yaml"
+USER_FILE: "user.yaml"
+
+# Ganancias del PID. Este perfil NO declara ERROR_TUNING, asi que corre la
+# estrategia por limites (tuning.py), que decide con cinco reglas de prioridad y
+# tampoco lee estas seis claves: ningun modulo lo hace. Se declaran porque
+# validate_config las exige cuando ERROR_TUNING esta desactivado, y porque son
+# columnas del CSV que se comparan con historiales antiguos. No hay ningun PID en
+# el programa; el nombre es lo que quedo de la version original.
+PID_FREQ_KP: 0.2
+PID_FREQ_KI: 0.01
+PID_FREQ_KD: 0.02
+PID_VOLT_KP: 0.1
+PID_VOLT_KI: 0.01
+PID_VOLT_KD: 0.02

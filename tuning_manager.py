@@ -256,8 +256,18 @@ class TuningManager:
             "fallbackStratumUser", primary["user"]
         )
         if not primary["user"] or not backup["user"]:
+            # El mensaje decia solo que faltaban, no de donde salen ni que hacer.
+            # Se llega aqui cuando el miner reporta stratumUser vacio y el
+            # user.yaml tampoco lo trae, que es el estado por defecto del
+            # repositorio a proposito: antes venia con una direccion del proyecto
+            # original y el hashrate se habria ido a un tercero.
             logging.error(
-                f"Stratum users missing: Primary='{primary['user']}', Backup='{backup['user']}'"
+                f"Stratum users missing: Primary='{primary['user']}', "
+                f"Backup='{backup['user']}'. Con --manage-pools hay que dar una "
+                f"direccion de pago: ponla en {self.user_file} (las dos claves, "
+                "stratumUser y fallbackStratumUser), o en el propio miner desde "
+                "AxeOS, o con --stratum-user. Sin usuario el miner no mina, asi "
+                "que no se aplica nada y se sale."
             )
             sys.exit(1)
 

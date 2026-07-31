@@ -51,7 +51,7 @@ class ApiClientQueFalla:
 
 
 def cargar_config():
-    path = os.path.join(REPO_ROOT, "BM1370.yaml")
+    path = os.path.join(REPO_ROOT, "chips", "BM1370.yaml")
     with open(path) as fh:
         return yaml.safe_load(fh)
 

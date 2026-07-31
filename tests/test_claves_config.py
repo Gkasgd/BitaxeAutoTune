@@ -36,6 +36,24 @@ from config import (
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Los YAML de fabrica viven en chips/ y los perfiles de usuario en perfiles/.
+# Antes estaban los seis en la raiz, con nombres (safe-BM1370.yaml,
+# safe-BM1370-estabilidad.yaml) que no decian ni donde ni que eran.
+PERFIL_ESTABILIDAD = "perfiles/gamma-estabilidad.yaml"
+PERFIL_CONSERVADOR = "perfiles/gamma-conservador.yaml"
+
+# Los limites que un perfil de usuario NO puede dejarse heredar. Los cuatro
+# extremos mas la temperatura objetivo y el limite de potencia: los seis valores
+# que deciden que se escribe al hardware y cuando se retrocede.
+LIMITES_DUROS = (
+    "MIN_VOLTAGE",
+    "MAX_VOLTAGE",
+    "MIN_FREQUENCY",
+    "MAX_FREQUENCY",
+    "TARGET_TEMP",
+    "POWER_LIMIT",
+)
+
 # Lo minimo con lo que el programa puede escribir un valor al miner. Es a
 # proposito un perfil de estabilidad SIN ninguna clave PID: es el caso que
 # fallaba.
@@ -185,14 +203,14 @@ class TestLosPerfilesDelProyectoSonValidos(unittest.TestCase):
             return yaml.safe_load(fh)
 
     def test_el_perfil_de_estabilidad_valida(self):
-        base = self._cargar("BM1370.yaml")
-        base.update(self._cargar("safe-BM1370-estabilidad.yaml"))
+        base = self._cargar("chips/BM1370.yaml")
+        base.update(self._cargar(PERFIL_ESTABILIDAD))
         validate_config(base)
 
     def test_el_perfil_de_estabilidad_no_hereda_nada(self):
         """Lo que se lee en ese fichero es lo que corre, sin excepciones."""
-        base = self._cargar("BM1370.yaml")
-        propio = self._cargar("safe-BM1370-estabilidad.yaml")
+        base = self._cargar("chips/BM1370.yaml")
+        propio = self._cargar(PERFIL_ESTABILIDAD)
         efectivo = dict(base)
         efectivo.update(propio)
         heredadas = sorted(k for k in efectivo if k not in propio)
@@ -205,15 +223,106 @@ class TestLosPerfilesDelProyectoSonValidos(unittest.TestCase):
         porque el suelo es hasta donde baja la busqueda del voltaje minimo y la
         rama termica.
         """
-        propio = self._cargar("safe-BM1370.yaml")
+        propio = self._cargar(PERFIL_CONSERVADOR)
         for clave in ("MIN_VOLTAGE", "MAX_VOLTAGE", "MIN_FREQUENCY", "MAX_FREQUENCY"):
             self.assertIn(clave, propio, f"{clave} se heredaria del YAML del chip")
         self.assertGreater(propio["MIN_VOLTAGE"], 1000, "el suelo de fabrica no es seguro")
 
     def test_el_perfil_conservador_valida(self):
-        base = self._cargar("BM1370.yaml")
-        base.update(self._cargar("safe-BM1370.yaml"))
+        base = self._cargar("chips/BM1370.yaml")
+        base.update(self._cargar(PERFIL_CONSERVADOR))
         validate_config(base)
+
+
+class TestTodoPerfilDeclaraSusLimites(unittest.TestCase):
+    """Vale para los perfiles que existan, no solo para los dos de hoy.
+
+    El hallazgo del que sale: el perfil conservador heredaba MIN_VOLTAGE 1000 y
+    MIN_FREQUENCY 400 de chips/BM1370.yaml, o sea los de fabrica. Un fichero
+    llamado "safe" con el suelo efectivo sin recortar.
+
+    Se comprueba por glob y no contra una lista de nombres para que un perfil
+    nuevo que alguien anada a perfiles/ quede cubierto sin tener que acordarse de
+    tocar este test. Es lo que hace que la comprobacion sobreviva al proximo
+    perfil, que es cuando vuelve a hacer falta.
+    """
+
+    def test_los_seis_limites_estan_declarados(self):
+        rutas = sorted(glob.glob(os.path.join(REPO_ROOT, "perfiles", "*.yaml")))
+        self.assertTrue(rutas, "no se encontro ningun perfil en perfiles/")
+        for ruta in rutas:
+            nombre = os.path.basename(ruta)
+            with self.subTest(perfil=nombre):
+                with open(ruta, encoding="utf-8") as fh:
+                    propio = yaml.safe_load(fh)
+                faltan = [k for k in LIMITES_DUROS if k not in propio]
+                self.assertEqual(
+                    faltan,
+                    [],
+                    f"{nombre} heredaria de chips/ estos limites: "
+                    f"{', '.join(faltan)}. Un perfil tiene que declarar su propio "
+                    "rango: lo que no declara sale de los limites de fabrica, que "
+                    "es justo lo que un perfil existe para recortar",
+                )
+
+    def test_los_limites_no_estan_invertidos(self):
+        """El recorte de seguridad devuelve el minimo si min > max."""
+        for ruta in sorted(glob.glob(os.path.join(REPO_ROOT, "perfiles", "*.yaml"))):
+            nombre = os.path.basename(ruta)
+            with self.subTest(perfil=nombre):
+                with open(ruta, encoding="utf-8") as fh:
+                    propio = yaml.safe_load(fh)
+                self.assertLessEqual(propio["MIN_VOLTAGE"], propio["MAX_VOLTAGE"], nombre)
+                self.assertLessEqual(
+                    propio["MIN_FREQUENCY"], propio["MAX_FREQUENCY"], nombre
+                )
+
+
+class TestElContainerfileCopiaLaConfiguracion(unittest.TestCase):
+    """El riesgo que ninguna otra prueba local cubre.
+
+    `COPY *.yaml *.py banner.txt ./` no incluye subdirectorios: los comodines de
+    COPY no bajan de nivel. Con los seis YAML en la raiz bastaba esa linea; al
+    moverlos a chips/ y perfiles/ hacen falta dos COPY explicitos, y si faltan la
+    imagen se construye sin ninguna configuracion. El programa termina con "ASIC
+    model YAML file chips/BM1370.yaml not found" y `restart: unless-stopped` lo
+    deja en bucle de reinicio contra un miner encendido.
+
+    Solo se ve construyendo la imagen, que no se puede hacer aqui. Esto es lo
+    mas cerca que se llega sin Docker: que las rutas esten declaradas.
+    """
+
+    def test_declara_los_dos_directorios(self):
+        with open(os.path.join(REPO_ROOT, "Containerfile"), encoding="utf-8") as fh:
+            lineas = [
+                l.strip() for l in fh if l.strip().upper().startswith("COPY")
+            ]
+        texto = "\n".join(lineas)
+        for directorio in ("chips/", "perfiles/"):
+            self.assertIn(
+                directorio,
+                texto,
+                f"ningun COPY del Containerfile menciona {directorio}: la imagen "
+                "se construiria sin configuracion y el contenedor entraria en "
+                "bucle de reinicio",
+            )
+
+    def test_los_directorios_que_copia_existen(self):
+        """Un COPY de un directorio que no esta hace fallar el build entero."""
+        with open(os.path.join(REPO_ROOT, "Containerfile"), encoding="utf-8") as fh:
+            copias = [
+                l.split()[1]
+                for l in fh
+                if l.strip().upper().startswith("COPY") and len(l.split()) >= 3
+            ]
+        for origen in copias:
+            if "*" in origen:
+                continue
+            with self.subTest(origen=origen):
+                self.assertTrue(
+                    os.path.exists(os.path.join(REPO_ROOT, origen)),
+                    f"el Containerfile copia {origen}, que no esta en el repo",
+                )
 
 
 class TestElDefaultDeDespliegueEsElQueSeUsa(unittest.TestCase):
@@ -224,7 +333,7 @@ class TestElDefaultDeDespliegueEsElQueSeUsa(unittest.TestCase):
     safe-BM1370.yaml, o sea la otra estrategia con otros limites.
     """
 
-    PERFIL = "safe-BM1370-estabilidad.yaml"
+    PERFIL = PERFIL_ESTABILIDAD
 
     def test_env_example(self):
         with open(os.path.join(REPO_ROOT, ".env.example"), encoding="utf-8") as fh:

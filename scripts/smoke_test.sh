@@ -229,10 +229,10 @@ if required is None:
 print(f"PASS|claves obligatorias leidas de {source_file} ({len(required)})")
 
 chip_files = sorted(
-    p for p in glob.glob(os.path.join(root, "BM*.yaml"))
+    p for p in glob.glob(os.path.join(root, "chips", "BM*.yaml"))
 )
 if not chip_files:
-    print("FAIL|no se encontro ningun BM*.yaml")
+    print("FAIL|no se encontro ningun chips/BM*.yaml")
 for path in chip_files:
     name = os.path.basename(path)
     try:

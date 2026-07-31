@@ -20,13 +20,26 @@ if [ "$#" -lt 1 ]; then
   exit 2
 fi
 
-if [ ! -f .venv/bin/activate ]; then
+# La ruta del activate depende del sistema: bin/ en Linux y macOS, Scripts/ en
+# Windows (Git Bash, MSYS). Estaba fijo en bin/ y en Windows este guion abortaba
+# diciendo que no habia entorno virtual justo despues de crearlo con exito.
+ACTIVATE=""
+for candidato in .venv/bin/activate .venv/Scripts/activate; do
+  if [ -f "$candidato" ]; then
+    ACTIVATE="$candidato"
+    break
+  fi
+done
+
+if [ -z "$ACTIVATE" ]; then
   echo "no existe .venv: ejecuta primero 'bash scripts/setup.sh'" >&2
+  echo "Rutas buscadas: .venv/bin/activate, .venv/Scripts/activate" >&2
   exit 2
 fi
 
 IP="$1"
 shift
 
-source .venv/bin/activate
+# shellcheck source=/dev/null
+source "$ACTIVATE"
 python ./bitaxepid.py --ip "$IP" --logging-level debug "$@"

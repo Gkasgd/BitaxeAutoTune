@@ -38,6 +38,12 @@ set -euo pipefail
 # le pasa parametros que la version vieja no acepta. Copiar uno sin el otro
 # revienta el arranque con un TypeError. El criterio real es "todo lo que el
 # proceso importa y ha cambiado", no "todo lo que se ejecuta".
+# El Containerfile y el docker-compose.yml NO son modulos, pero van al paquete
+# por la misma razon: han cambiado y el nodo no arranca sin el cambio. El
+# Containerfile necesita los dos COPY de chips/ y perfiles/ (los comodines no
+# bajan de nivel: sin ellos la imagen sale sin configuracion y el contenedor
+# entra en bucle de reinicio), y el compose apunta al nombre nuevo del perfil.
+# Es el unico fallo del paquete que no se ve hasta construir la imagen.
 ARCHIVOS_RAIZ=(
     api_client.py
     bitaxepid.py
@@ -48,11 +54,24 @@ ARCHIVOS_RAIZ=(
     tuning.py
     tuning_estabilidad.py
     tuning_manager.py
-    safe-BM1370-estabilidad.yaml
+    Containerfile
+    docker-compose.yml
 )
 
 # Rutas con subdirectorio, que hay que crear en el destino.
+#
+# Los dos YAML van AQUI desde la reorganizacion: el perfil paso a
+# perfiles/gamma-estabilidad.yaml y el YAML de chip a chips/BM1370.yaml.
+#
+# El de chip hay que enviarlo aunque no haya cambiado ni un valor, y esta es la
+# razon: bitaxepid.py ya no lo busca en la raiz sino en chips/ (ruta_yaml_de_chip
+# en config.py). El nodo lo tiene en la raiz, de la instalacion anterior, asi que
+# copiar solo los .py deja el arranque terminando con "ASIC model YAML file
+# chips/BM1370.yaml not found" y el contenedor en bucle de reinicio. El fichero
+# viejo de la raiz se queda ahi sin que nadie lo lea; borrarlo es opcional.
 ARCHIVOS_ANIDADOS=(
+    chips/BM1370.yaml
+    perfiles/gamma-estabilidad.yaml
     tests/test_estabilidad.py
 )
 
@@ -142,7 +161,8 @@ while IFS= read -r presente; do
         echo "  RETIRADO $rel (ya no esta declarado en el script)"
         rm -- "$presente"
     fi
-done < <(find "$destino" -type f \( -name '*.py' -o -name '*.yaml' \) | sort)
+done < <(find "$destino" -type f \
+    \( -name '*.py' -o -name '*.yaml' -o -name '*.yml' -o -name 'Containerfile' \) | sort)
 
 # --- Manifiesto -----------------------------------------------------------
 #

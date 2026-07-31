@@ -18,7 +18,7 @@
 #
 # Para parar:  docker compose down
 #
-# El perfil por defecto es safe-BM1370-estabilidad.yaml: estrategia de
+# El perfil por defecto es perfiles/gamma-estabilidad.yaml: estrategia de
 # estabilidad (ERROR_TUNING: TRUE), 60 C de objetivo, 1180-1210 mV y
 # 475-925 MHz. Si tu miner no es un Gamma (BM1370), cambia BITAXEPID_CONFIG en
 # .env por un perfil propio.
@@ -45,7 +45,7 @@ services:
     command:
       - "${BITAXEPID_MINER_IP:?pon la IP del miner en .env (BITAXEPID_MINER_IP)}"
       - "--config"
-      - "${BITAXEPID_CONFIG:-safe-BM1370-estabilidad.yaml}"
+      - "${BITAXEPID_CONFIG:-perfiles/gamma-estabilidad.yaml}"
       - "--log-to-console"
 
     ports:
@@ -56,7 +56,7 @@ services:
 
     volumes:
       # El CSV de tuning y el snapshot JSON, para que sobrevivan al contenedor.
-      # Los dos perfiles safe-BM1370*.yaml apuntan LOG_FILE y SNAPSHOT_FILE a
+      # Los dos perfiles de perfiles/ apuntan LOG_FILE y SNAPSHOT_FILE a
       # data/, relativo al WORKDIR del contenedor (/app). Si usas un perfil
       # propio con rutas planas, los ficheros caeran en /app y este volumen no
       # los recogera.
