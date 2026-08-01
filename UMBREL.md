@@ -5,10 +5,6 @@ Objetivo: dejar el tuner corriendo en el Umbrel apuntando a tu Bitaxe Gamma
 objetivo, 1180-1210 mV y 475-925 MHz**, buscando el voltaje mínimo que mantenga
 los errores de hardware por debajo del **2 %**.
 
-Antes de nada, lo importante: **nada de esto se ha probado en tu miner ni en tu
-Umbrel.** Lo verificado está medido contra un miner simulado, sin construir la
-imagen del contenedor. Al final hay una lista de qué está comprobado y qué no.
-
 ## Antes de empezar
 
 Dale al miner una **IP fija** (reserva DHCP en el router). El contenedor no
