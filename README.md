@@ -1,7 +1,5 @@
 # BitaxePID Auto-Tuner
 
-![logo](docs/assets/bitaxepid-logo.jpg)
-
 ## Overview
 
 BitaxePID is an auto-tuning utility for Bitaxe open-source Bitcoin ASIC miners
