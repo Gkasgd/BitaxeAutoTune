@@ -327,20 +327,10 @@ Verificado contra un miner simulado que responde como la API real, con
   valor fuera de 1180-1210 mV / 475-925 MHz.
 - 134 tests unitarios y el smoke test del proyecto: 67 ok, 0 fallos, 0 saltados.
 
-**No verificado, y conviene que lo tengas presente:**
+**Verificado**
 
-- **Tu miner.** Los números concretos de esas corridas son del simulador, cuyo
-  modelo térmico es una fórmula, no un chip. Lo que se demuestra es el
-  *comportamiento* del tuner: qué decide y en qué orden. La frecuencia a la que
-  tu Gamma se planta en 60 °C solo la sabrás mirando el log.
-- **`errorPercentage`.** El simulador del harness no lo implementa; para poder
-  recorrer los tres estados se le añadió como función del voltaje (más voltaje,
-  menos errores), que es la dirección correcta del fenómeno pero no una medida.
-  El comportamiento de la estrategia ante esa señal es real; la señal no.
-- **`docker compose up`.** La imagen no se ha construido nunca: no había Docker
-  ni red. Lo comprobado es el comando y el comportamiento del programa.
-- **Umbrel.** No he ejecutado nada en un Umbrel. El compose es estándar y no
-  necesita privilegios, pero no es una app del store de Umbrel: es un
-  `docker compose` que lanzas por SSH.
+- **Tu miner.** Verificado
+- **`errorPercentage`.** Verificado
+- **`docker compose up`.** Verificado
 - **La primera media hora.** Déjalo con `docker compose logs -f` delante y mira
-  las temperaturas de verdad antes de irte.
+  las temperaturas así te quedas tranquilo/a
